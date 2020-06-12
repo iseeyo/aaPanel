@@ -561,7 +561,6 @@ class ajax:
         phplib = json.loads(public.readFile('data/phplib.conf'))
         libs = []
         tasks = public.M('tasks').where("status!=?",('1',)).field('status,name').select()
-        phpini_ols = None
         for lib in phplib:
             lib['task'] = '1'
             for task in tasks:
@@ -575,10 +574,9 @@ class ajax:
             if public.get_webserver() == 'openlitespeed':
                 lib['status'] = False
                 get.php_version = "{}.{}".format(get.version[0],get.version[1])
-                if not phpini_ols:
-                    phpini_ols = self.php_info(get)['phpinfo']['modules'].lower()
-                    phpini_ols = phpini_ols.split()
-                for i in phpini_ols:
+                phpini = self.php_info(get)['phpinfo']['modules'].lower()
+                phpini = phpini.split()
+                for i in phpini:
                     if lib['check'][:-3].lower() == i :
                         lib['status'] = True
                         break
@@ -598,37 +596,20 @@ class ajax:
         
     #获取PHP扩展
     def getCloudPHPExt(self,get):
+        import json
         try:
-            self._process_chinese_ext_description()
             if 'php_ext' in session: return True
-            if not self._get_cloud_phplib():
-                return False
+            if not session.get('download_url'): session['download_url'] = 'http://download.bt.cn'
+            download_url = session['download_url'] + '/install/lib/phplib_en.json'
+            tstr = public.httpGet(download_url)
+            data = json.loads(tstr)
+            if not data: return False
+            public.writeFile('data/phplib.conf',json.dumps(data))
             session['php_ext'] = True
             return True
         except:
             return False
-
-    # 处理PHP插件变描述中文
-    def _process_chinese_ext_description(self):
-        chinese = None
-        phplib = json.loads(public.readFile('data/phplib.conf'))
-        for p in phplib:
-            if "缓存器" in p['type']:
-                chinese = True
-                break
-        if chinese:
-            self._get_cloud_phplib()
-
-    # 下载云端php扩展配置
-    def _get_cloud_phplib(self):
-        if not session.get('download_url'): session['download_url'] = 'http://download.bt.cn'
-        download_url = session['download_url'] + '/install/lib/phplib_en.json'
-        tstr = public.httpGet(download_url)
-        data = json.loads(tstr)
-        if not data: return False
-        public.writeFile('data/phplib.conf', json.dumps(data))
-        return True
-
+        
     #取PHPINFO信息
     def GetPHPInfo(self,get):
         if public.get_webserver() == "openlitespeed":
@@ -666,6 +647,9 @@ class ajax:
         else:
             conf_file = "/www/server/panel/vhost/apache/phpmyadmin.conf"
             rep = "Listen\s*(\d+)"
+        # else:
+        #     conf_file = "/www/server/panel/vhost/openlitespeed/listen/888.conf"
+        #     rep = "address\s+\*:(\d+)"
         return {"conf_file":conf_file,"rep":rep}
 
     # 设置phpmyadmin路径
@@ -1060,29 +1044,15 @@ class ajax:
     
     #取PHP-FPM日志
     def GetFpmLogs(self,get):
-        import re
-        fpm_path = '/www/server/php/' + get.version + '/etc/php-fpm.conf'
-        if not os.path.exists(fpm_path): return public.returnMsg(False,'AJAX_LOG_FILR_NOT_EXISTS')
-        fpm_conf = public.readFile(fpm_path)
-        log_tmp = re.findall(r"error_log\s*=\s*(.+)",fpm_conf)
-        if not log_tmp: return public.returnMsg(False,'AJAX_LOG_FILR_NOT_EXISTS')
-        log_file = log_tmp[0].strip()
-        if log_file.find('var/log') == 0:
-            log_file = '/www/server/php/' +get.version + '/'+ log_file
-        return public.returnMsg(True,public.GetNumLines(log_file,1000))
+        path = '/www/server/php/' + get.version + '/var/log/php-fpm.log'
+        if not os.path.exists(path): return public.returnMsg(False,'AJAX_LOG_FILR_NOT_EXISTS')
+        return public.returnMsg(True,public.GetNumLines(path,1000))
     
     #取PHP慢日志
     def GetFpmSlowLogs(self,get):
-        import re
-        fpm_path = '/www/server/php/' + get.version + '/etc/php-fpm.conf'
-        if not os.path.exists(fpm_path): return public.returnMsg(False,'AJAX_LOG_FILR_NOT_EXISTS')
-        fpm_conf = public.readFile(fpm_path)
-        log_tmp = re.findall(r"slowlog\s*=\s*(.+)",fpm_conf)
-        if not log_tmp: return public.returnMsg(False,'AJAX_LOG_FILR_NOT_EXISTS')
-        log_file = log_tmp[0].strip()
-        if log_file.find('var/log') == 0:
-            log_file = '/www/server/php/' +get.version + '/'+ log_file
-        return public.returnMsg(True,public.GetNumLines(log_file,1000))
+        path = '/www/server/php/' + get.version + '/var/log/slow.log'
+        if not os.path.exists(path): return public.returnMsg(False,'AJAX_LOG_FILR_NOT_EXISTS')
+        return public.returnMsg(True,public.GetNumLines(path,1000))
     
     #取指定日志
     def GetOpeLogs(self,get):

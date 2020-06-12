@@ -2016,7 +2016,7 @@ var soft = {
                                 {
                                     field: 'opt',
                                     title: lan.public.action,
-                                    width: 60,
+                                    width: 50,
                                     templet: function(item) {
                                         var opt = '<a class="btlink lib-install" data-name="' + item.name + '" data-title="' + item.title + '"  href="javascript:;">' + lan.soft.install + '</a>'
                                         if (item['task'] == '-1' && item.phpversions.indexOf(version) != -1) {

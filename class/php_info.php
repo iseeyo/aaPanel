@@ -40,7 +40,7 @@ function get_info(){
 	//文件与字符串处理库
 	$data['5io_string'] = array();
 	$data['5io_string']['Xmlrpc'] = get_extension_funcs('xmlrpc')?true:false;
-	$data['5io_string']['FileInfo'] = in_array('fileinfo',$data['modules'])?true:false;
+	$data['5io_string']['FileInfo'] = get_extension_funcs('fileinfo')?true:false;
 	$data['5io_string']['Ftp'] = get_extension_funcs('ftp')?true:false;
 	$data['5io_string']['Mbstring'] = get_extension_funcs('mbstring')?true:false;
 	$data['5io_string']['bz2'] = in_array('bz2',$data['modules']);
@@ -75,6 +75,6 @@ function get_info(){
 	return $data;
 }
 $result = get_info();
-exit(json_encode($result));
+exit(json_encode($result,1));
 
 
