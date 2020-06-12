@@ -353,7 +353,7 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
                     size = str(stat.st_size)
                     if os.path.isdir(filePath):
                         dirnames.append(filename+';'+size+';' +
-                                        mtime+';'+accept+';'+user+';'+link + ';0;' + self.is_composer_json(filePath))
+                                        mtime+';'+accept+';'+user+';'+link + ';' +self.get_download_id(filePath)+';'+ self.is_composer_json(filePath))
                     else:
                         filenames.append(filename+';'+size+';'+mtime+';'+accept+';'+user+';'+link+';'+self.get_download_id(filePath))
                     n += 1
@@ -501,6 +501,27 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
         if path and tmp_path != '/':
             filename = filename.replace(tmp_path, '')
         return filename + ';' + size + ';' + mtime + ';' + accept + ';' + user + ';' + link+';'+ down_url
+
+    #获取指定目录下的所有视频或音频文件
+    def get_videos(self,args):
+        path = args.path.strip()
+        v_data = []
+        if not os.path.exists(path): return v_data
+        import mimetypes
+        for fname in os.listdir(path):
+            try:
+                filename = os.path.join(path,fname)
+                if not os.path.exists(filename): continue
+                if not os.path.isfile(filename): continue
+                v_tmp = {}
+                v_tmp['name'] = fname
+                v_tmp['type'] = mimetypes.guess_type(filename)[0]
+                v_tmp['size'] = os.path.getsize(filename)
+                if not v_tmp['type'].split('/')[0] in ['video']:
+                    continue
+                v_data.append(v_tmp)
+            except:continue
+        return sorted(v_data,key=lambda x:x['name'])
 
     # 计算文件数量
     def GetFilesCount(self, path, search):
@@ -785,6 +806,7 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
             public.WriteLog('TYPE_FILE', 'FILE_COPY_SUCCESS',
                             (get.sfile, get.dfile))
             stat = os.stat(get.sfile)
+            os.chmod(get.dfile,stat.st_mode)
             os.chown(get.dfile, stat.st_uid, stat.st_gid)
             return public.returnMsg(True, 'FILE_COPY_SUCCESS')
         except:
@@ -807,6 +829,7 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
         try:
             self.copytree(get.sfile, get.dfile)
             stat = os.stat(get.sfile)
+            os.chmod(get.dfile,stat.st_mode)
             os.chown(get.dfile, stat.st_uid, stat.st_gid)
             public.WriteLog('TYPE_FILE', 'DIR_COPY_SUCCESS',
                             (get.sfile, get.dfile))
@@ -825,8 +848,11 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
         if get.sfile == '/www/Recycle_bin':
             return public.returnMsg(False,'You cannot directly operate the recycle bin directory, please press the [Recycle Bin] button in the upper right corner to open')
         if not os.path.exists(get.sfile):
-            return public.returnMsg(False,'FILE_NOT_EXISTS')
-        
+            return public.returnMsg(False, 'FILE_NOT_EXISTS')
+
+        if get.dfile[-1] == '/':
+            get.dfile = get.dfile[:-1]
+
         if get.dfile == get.sfile:
             return public.returnMsg(False,'Meaningless operation')
         
@@ -1331,6 +1357,11 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
                     os.remove(sfile)
         return True
 
+
+    #创建软链
+    def create_link(self,args):
+        pass
+
     # 复制目录
     def copytree(self, sfile, dfile):
         if sfile == dfile:
@@ -1804,19 +1835,17 @@ cd %s
     # 生成下载地址
     def create_download_url(self, get):
         if not os.path.exists(get.filename):
-            return public.returnMsg(False, 'The specified file does not exist!')
-        if not os.path.isfile(get.filename):
-            return public.returnMsg(False, 'Cannot generate download address for directory!')
+            return public.returnMsg(False,'The specified file does not exist!')
         my_table = 'download_token'
         mtime = int(time.time())
         pdata = {
-            "filename": get.filename,  # 文件名
-            "token": public.GetRandomString(12),  # 12位随机密钥，用于URL
-            "expire": mtime + (int(get.expire) * 3600),  # 过期时间
-            "ps": get.ps,  # 备注
-            "total": 0,  # 下载计数
-            "password": get.password,  # 提取密码
-            "addtime": mtime  # 添加时间
+            "filename": get.filename,               #文件名
+            "token": public.GetRandomString(12),    #12位随机密钥，用于URL
+            "expire": mtime + (int(get.expire) * 3600), #过期时间
+            "ps":get.ps, #备注
+            "total":0,  #下载计数
+            "password":str(get.password), #提取密码
+            "addtime": mtime #添加时间
         }
         # 更新 or 插入
         token = public.M(my_table).where('filename=?', (get.filename,)).getField('token')
