@@ -4,10 +4,10 @@
 # +-------------------------------------------------------------------
 # | Copyright (c) 2015-2099 宝塔软件(http:#bt.cn) All rights reserved.
 # +-------------------------------------------------------------------
-# | Author: 黄文良 <287962566@qq.com>
+# | Author: hwliang <hwl@bt.cn>
 # +-------------------------------------------------------------------
 
-import public,os,sys,db,time,json
+import public,os,sys,db,time,json,re
 from BTPanel import session,cache,json_header
 from flask import request,redirect,g
 
@@ -19,30 +19,36 @@ class userlogin:
         
         self.error_num(False)
         if self.limit_address('?') < 1: return public.returnJson(False,'LOGIN_ERR_LIMIT'),json_header
-        
         post.username = post.username.strip()
-        password = public.md5(post.password.strip())
+
+        public.chdck_salt()
         sql = db.Sql()
-        user_list = sql.table('users').field('id,username,password').select()
+        user_list = sql.table('users').field('id,username,password,salt').select()
         userInfo = None
         for u_info in user_list:
-            if u_info['username'] == post.username:
+            if public.md5(u_info['username']) == post.username:
                 userInfo = u_info
         if 'code' in session:
             if session['code'] and not 'is_verify_password' in session:
-                if not hasattr(post, 'code'): return public.returnMsg(False,'Verification code can not be empty!')
+                if not hasattr(post, 'code'): return public.returnJson(False,'Verification code can not be empty!'),json_header
                 if not public.checkCode(post.code):
                     public.WriteLog('TYPE_LOGIN','LOGIN_ERR_CODE',('****','****',public.GetClientIp()))
                     return public.returnJson(False,'CODE_ERR'),json_header
         try:
-            s_pass = public.md5(public.md5(userInfo['password'] + '_bt.cn'))
-            if userInfo['username'] != post.username or s_pass != password:
+            if not userInfo['salt']:
+                public.chdck_salt()
+                userInfo = sql.table('users').where('id=?',(userInfo['id'],)).field('id,username,password,salt').find()
+
+            password = public.md5(post.password.strip() + userInfo['salt'])
+            if public.md5(userInfo['username']) != post.username or userInfo['password'] != password:
                 public.WriteLog('TYPE_LOGIN','LOGIN_ERR_PASS',('****','******',public.GetClientIp()))
                 num = self.limit_address('+')
                 return public.returnJson(False,'LOGIN_USER_ERR',(str(num),)),json_header
             _key_file = "/www/server/panel/data/two_step_auth.txt"
+            #登陆告警
+            public.login_send_body("Userinfo",userInfo['username'],public.GetClientIp(),str(request.environ.get('REMOTE_PORT')))
             if hasattr(post,'vcode'):
-                if self.limit_address('?',v="vcode") < 1: return public.returnJson(False,'您多次验证失败，禁止10分钟'),json_header
+                if self.limit_address('?',v="vcode") < 1: return public.returnJson(False,'You have failed verification many times, forbidden for 10 minutes'),json_header
                 import pyotp
                 secret_key = public.readFile(_key_file)
                 if not secret_key:
@@ -71,8 +77,8 @@ class userlogin:
         except Exception as ex:
             stringEx = str(ex)
             if stringEx.find('unsupported') != -1 or stringEx.find('-1') != -1: 
-                os.system("rm -f /tmp/sess_*")
-                os.system("rm -f /www/wwwlogs/*log")
+                public.ExecShell("rm -f /tmp/sess_*")
+                public.ExecShell("rm -f /www/wwwlogs/*log")
                 public.ServiceReload()
                 return public.returnJson(False,'USER_INODE_ERR'),json_header
             public.WriteLog('TYPE_LOGIN','LOGIN_ERR_PASS',('****','******',public.GetClientIp()))
@@ -82,6 +88,10 @@ class userlogin:
     def request_tmp(self,get):
         try:
             if not hasattr(get,'tmp_token'): return public.returnJson(False,'INIT_ARGS_ERR'),json_header
+            if len(get.tmp_token) == 48:
+                return self.request_temp(get)
+            if len(get.tmp_token) != 64: return public.returnJson(False,'INIT_ARGS_ERR'),json_header
+            if not re.match(r"^\w+$",get.tmp_token):return public.returnJson(False,'INIT_ARGS_ERR'),json_header
             save_path = '/www/server/panel/config/api.json'
             data = json.loads(public.ReadFile(save_path))
             if not 'tmp_token' in data or not 'tmp_time' in data: return public.returnJson(False,'VERIFICATION_FAILED'),json_header
@@ -91,7 +101,8 @@ class userlogin:
             session['login'] = True
             session['username'] = userInfo['username']
             session['tmp_login'] = True
-            public.WriteLog('TYPE_LOGIN','LOGIN_SUCCESS',(userInfo['username'],public.GetClientIp()))
+            session['uid'] = userInfo['id']
+            public.WriteLog('TYPE_LOGIN','LOGIN_SUCCESS',(userInfo['username'],public.GetClientIp()+ ":" + str(request.environ.get('REMOTE_PORT'))))
             self.limit_address('-')
             cache.delete('panelNum')
             cache.delete('dologin')
@@ -108,10 +119,58 @@ class userlogin:
             return public.returnJson(False,'Login failed,' + public.get_error_info()),json_header
 
 
+    def request_temp(self,get):
+        try:
+            if len(get.__dict__.keys()) > 2: return public.getMsg('INIT_ARGS_ERR')
+            if not hasattr(get,'tmp_token'): return public.getMsg('INIT_ARGS_ERR')
+            if len(get.tmp_token) != 48: return public.getMsg('INIT_ARGS_ERR')
+            if not re.match(r"^\w+$",get.tmp_token):return public.getMsg('INIT_ARGS_ERR')
+            skey = public.GetClientIp() + '_temp_login'
+            if not public.get_error_num(skey,10): return public.getMsg('AUTH_FAILED')
+            s_time = int(time.time())
+            data = public.M('temp_login').where('state=? and expire>?',(0,s_time)).field('id,token,salt,expire').find()
+            if not data:
+                public.set_error_num(skey)
+                return public.getMsg('VERIFICATION_FAILED')
+            if not isinstance(data,dict):
+                public.set_error_num(skey)
+                return public.getMsg('VERIFICATION_FAILED')
+            r_token = public.md5(get.tmp_token + data['salt'])
+            if r_token != data['token']:
+                public.set_error_num(skey)
+                return public.getMsg('VERIFICATION_FAILED')
+            public.set_error_num(skey,True)
+            userInfo = public.M('users').where("id=?",(1,)).field('id,username').find()
+            session['login'] = True
+            session['username'] = public.getMsg('TEMPORARY_ID',(data['id'],))
+            session['tmp_login'] = True
+            session['tmp_login_id'] = str(data['id'])
+            session['tmp_login_expire'] = time.time() + 3600
+            session['uid'] = data['id']
+            sess_path = 'data/session'
+            if not os.path.exists(sess_path):
+                os.makedirs(sess_path,384)
+            public.writeFile(sess_path + '/' + str(data['id']),'')
+            login_addr = public.GetClientIp()+ ":" + str(request.environ.get('REMOTE_PORT'))
+            public.WriteLog('TYPE_LOGIN','LOGIN_SUCCESS',(userInfo['username'],login_addr))
+            public.M('temp_login').where('id=?',(data['id'],)).update({"login_time":s_time,'state':1,'login_addr':login_addr})
+            self.limit_address('-')
+            cache.delete('panelNum')
+            cache.delete('dologin')
+            sess_input_path = 'data/session_last.pl'
+            public.writeFile(sess_input_path,str(int(time.time())))
+            self.set_request_token()
+            self.login_token()
+            self.set_cdn_host(get)
+            public.login_send_body("Temporary authorization",userInfo['username'],public.GetClientIp(),str(request.environ.get('REMOTE_PORT')))
+            return redirect('/')
+        except:
+            return public.getMsg('LOGIN_FAIL')
+
+
     def login_token(self):
         import config
         config.config().reload_session()
-        self.clear_session()
 
     def request_get(self,get):
         #if os.path.exists('/www/server/panel/install.pl'): raise redirect('/install');
@@ -218,7 +277,7 @@ class userlogin:
             session['login'] = True
             session['username'] = userInfo['username']
             session['uid'] = userInfo['id']
-            public.WriteLog('TYPE_LOGIN','LOGIN_SUCCESS',(userInfo['username'],public.GetClientIp()))
+            public.WriteLog('TYPE_LOGIN','LOGIN_SUCCESS',(userInfo['username'],public.GetClientIp()+ ":" + str(request.environ.get('REMOTE_PORT'))))
             self.limit_address('-')
             cache.delete('panelNum')
             cache.delete('dologin')
@@ -226,12 +285,15 @@ class userlogin:
             public.writeFile(sess_input_path,str(int(time.time())))
             self.set_request_token()
             self.login_token()
+            login_type = 'data/app_login.pl'
+            if os.path.exists(login_type):
+                os.remove(login_type)
             return public.returnJson(True,'LOGIN_SUCCESS'),json_header
         except Exception as ex:
             stringEx = str(ex)
             if stringEx.find('unsupported') != -1 or stringEx.find('-1') != -1:
-                os.system("rm -f /tmp/sess_*")
-                os.system("rm -f /www/wwwlogs/*log")
+                public.ExecShell("rm -f /tmp/sess_*")
+                public.ExecShell("rm -f /www/wwwlogs/*log")
                 public.ServiceReload()
                 return public.returnJson(False,'USER_INODE_ERR'),json_header
             public.WriteLog('TYPE_LOGIN','LOGIN_ERR_PASS',('****','******',public.GetClientIp()))

@@ -4,7 +4,7 @@
 #-------------------------------------------------------------------
 # Copyright (c) 2015-2017 宝塔软件(http:#bt.cn) All rights reserved.
 #-------------------------------------------------------------------
-# Author: 梁凯强 <1249648969@qq.com>
+# Author: lkqiang <lkq@bt.cn>
 #-------------------------------------------------------------------
 # SSH 安全类
 #------------------------------
@@ -15,6 +15,7 @@ class ssh_security:
     __SSH_CONFIG='/etc/ssh/sshd_config'
     __ip_data = None
     __ClIENT_IP='/www/server/panel/data/host_login_ip.json'
+    __pyenv = 'python'
     __REPAIR={"1":{"id":1,
                    "type":"file",
                    "harm":"High",
@@ -88,10 +89,29 @@ class ssh_security:
             public.WriteFile(self.__ClIENT_IP,json.dumps([]))
         self.__mail=send_mail.send_mail()
         self.__mail_config=self.__mail.get_settings()
+        self._check_pyenv()
         try:
             self.__ip_data = json.loads(public.ReadFile(self.__ClIENT_IP))
         except:
             self.__ip_data=[]
+
+    def _check_pyenv(self):
+        if os.path.exists('/www/server/panel/pyenv'):
+            self.__pyenv = 'btpython'
+
+    def return_python(self):
+        if os.path.exists('/www/server/panel/pyenv/bin/python'):return '/www/server/panel/pyenv/bin/python'
+        if os.path.exists('/usr/bin/python'):return '/usr/bin/python'
+        if os.path.exists('/usr/bin/python3'):return '/usr/bin/python3'
+        return 'python'
+
+    def return_bashrc(self):
+        if os.path.exists('/root/.bashrc'):return '/root/.bashrc'
+        if os.path.exists('/etc/bashrc'):return '/etc/bashrc'
+        if os.path.exists('/etc/bash.bashrc'):return '/etc/bash.bashrc'
+        fd = open('/root/.bashrc', mode="w", encoding="utf-8")
+        fd.close()
+        return '/root/.bashrc'
 
     def check_files(self):
         try:
@@ -223,7 +243,7 @@ class ssh_security:
 
     #获取ROOT当前登陆的IP
     def get_ip(self):
-        data = public.ExecShell(''' echo $SSH_CLIENT |awk ' { print $1 }' ''')
+        data = public.ExecShell(''' who am i |awk ' {print $5 }' ''')
         data = re.findall("(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)",data[0])
         return data
 
@@ -237,6 +257,12 @@ class ssh_security:
             'addtime desc').select()
         return data
 
+    def get_server_ip(self):
+        if os.path.exists('/www/server/panel/data/iplist.txt'):
+            data=public.ReadFile('/www/server/panel/data/iplist.txt')
+            return data.strip()
+        else:return '127.0.0.1'
+
 
     #登陆的情况下
     def login(self):
@@ -248,35 +274,45 @@ class ssh_security:
         if not ip:
             ip = ["127.0.0.1"]
         if len(ip[0])==0:return False
-        if ip[0] in self.__ip_data:
-            public.WriteLog('SSH security', 'The server {} login IP is {}, login user is root'.format(public.GetLocalIp(),ip[0]))
-            return False
-        else:
-            self.send_mail_data('Server {} login alarm'.format(public.GetLocalIp()),'There is a login alarm on the server {}, the login IP is {}, the login user is root'.format(public.GetLocalIp(),ip[0]))
-            public.WriteLog('SSH security','There is a login alarm on the server {}, the login IP is {}, login user is root'.format(public.GetLocalIp(),ip [0]))
-            return True
+        try:
+            import time
+            mDate = time.strftime('%Y-%m-%d %X', time.localtime())
+            if ip[0] in self.__ip_data:
+                if public.M('logs').where('type=? addtime', ('SSH security',mDate,)).count():return False
+                public.WriteLog('SSH security', 'The server {} login IP is {}, login user is root'.format(public.GetLocalIp(),ip[0]))
+                return False
+            else:
+                if public.M('logs').where('type=? addtime', ('SSH security', mDate,)).count(): return False
+                self.send_mail_data('Server {} login alarm'.format(public.GetLocalIp()),'There is a login alarm on the server {}, the login IP is {}, the login user is root'.format(public.GetLocalIp(),ip[0]))
+                public.WriteLog('SSH security','There is a login alarm on the server {}, the login IP is {}, login user is root'.format(public.GetLocalIp(),ip [0]))
+                return True
+        except:
+            pass
 
     #开启监控
     def start_jian(self,get):
-        data=public.ReadFile('/etc/bashrc')
-        if not re.search('python /www/server/panel/class/ssh_security.py',data):
-            public.WriteFile('/etc/bashrc',data.strip()+'\npython /www/server/panel/class/ssh_security.py login\n')
+        data=public.ReadFile(self.return_bashrc())
+        if not re.search('{}\/www\/server\/panel\/class\/ssh_security.py'.format(".*python\s+"),data):
+            public.WriteFile(self.return_bashrc(),data.strip()+'\n'+self.return_python()+ ' /www/server/panel/class/ssh_security.py login\n')
             return public.returnMsg(True, 'Open successfully')
         return public.returnMsg(False, 'Open failed')
 
     #关闭监控
     def stop_jian(self,get):
-        data = public.ReadFile('/etc/bashrc')
-        if re.search('python /www/server/panel/class/ssh_security.py', data):
-            public.WriteFile('/etc/bashrc',data.replace('python /www/server/panel/class/ssh_security.py login',''))
+        data = public.ReadFile(self.return_bashrc())
+        if re.search(self.return_python()+' /www/server/panel/class/ssh_security.py', data):
+            public.WriteFile(self.return_bashrc(),data.replace(self.return_python()+' /www/server/panel/class/ssh_security.py login',''))
+            if os.path.exists('/etc/bashrc'):
+                if re.search('python /www/server/panel/class/ssh_security.py', data):
+                    public.WriteFile(self.return_bashrc(),data.replace(self.return_python()+' /www/server/panel/class/ssh_security.py login',''))
             return public.returnMsg(True, 'Closed successfully')
         else:
             return public.returnMsg(True, 'Closed successfully')
 
     #监控状态
     def get_jian(self,get):
-        data = public.ReadFile('/etc/bashrc')
-        if re.search('python /www/server/panel/class/ssh_security.py login', data):
+        data = public.ReadFile(self.return_bashrc())
+        if re.search('{}\/www\/server\/panel\/class\/ssh_security.py\s+login'.format(".*python\s+"), data):
             return public.returnMsg(True, '1')
         else:
             return public.returnMsg(False, '1')
@@ -342,8 +378,8 @@ class ssh_security:
         rec = '\n#?RSAAuthentication\s\w+'
         rec2 = '\n#?PubkeyAuthentication\s\w+'
         file = public.readFile(self.__SSH_CONFIG)
-        file_ssh = re.sub(rec, '\n#RSAAuthentication no', file)
-        file_result = re.sub(rec2, '\n#PubkeyAuthentication no', file_ssh)
+        file_ssh = re.sub(rec, '\nRSAAuthentication no', file)
+        file_result = re.sub(rec2, '\nPubkeyAuthentication no', file_ssh)
         self.wirte(self.__SSH_CONFIG, file_result)
         self.set_password(get)
         self.restart_ssh()
@@ -359,6 +395,9 @@ class ssh_security:
         rec = '\n#?RSAAuthentication\s\w+'
         pubkey = '\n#?PubkeyAuthentication\s\w+'
         ssh_password = '\nPasswordAuthentication\s\w+'
+        #是否运行root登录
+        root_is_login='\n#?PermitRootLogin\s\w+'
+
         ret = re.findall(ssh_password, file)
         if not ret:
             result['password'] = 'no'
@@ -383,7 +422,47 @@ class ssh_security:
                 result['rsa_auth'] = 'no'
             else:
                 result['rsa_auth'] = 'yes'
+
+        is_root=re.findall(root_is_login, file)
+        if not is_root:
+            result['root_is_login'] = 'no'
+        else:
+            if is_root[-1].split()[-1] == 'no':
+                result['root_is_login'] = 'no'
+            else:
+                result['root_is_login'] = 'yes'
         return result
+
+
+    def set_root(self, get):
+        '''
+        开启密码登陆
+        get: 无需传递参数
+        '''
+        ssh_password = '\n#?PermitRootLogin\s\w+'
+        file = public.readFile(self.__SSH_CONFIG)
+        if len(re.findall(ssh_password, file)) == 0:
+            file_result = file + '\nPermitRootLogin yes'
+        else:
+            file_result = re.sub(ssh_password, '\nPermitRootLogin yes', file)
+        self.wirte(self.__SSH_CONFIG, file_result)
+        self.restart_ssh()
+        return public.returnMsg(True, 'Successfully opened')
+
+    def stop_root(self, get):
+        '''
+        开启密码登陆
+        get: 无需传递参数
+        '''
+        ssh_password = '\n#?PermitRootLogin\s\w+'
+        file = public.readFile(self.__SSH_CONFIG)
+        if len(re.findall(ssh_password, file)) == 0:
+            file_result = file + '\nPermitRootLogin no'
+        else:
+            file_result = re.sub(ssh_password, '\nPermitRootLogin no', file)
+        self.wirte(self.__SSH_CONFIG, file_result)
+        self.restart_ssh()
+        return public.returnMsg(True, 'Closed successfully')
 
     def stop_password(self, get):
         '''
@@ -418,7 +497,7 @@ class ssh_security:
         act = 'restart'
         if not os.path.exists('/etc/redhat-release'):
             public.ExecShell('service ssh ' + act)
-        elif version.find(' 7.') != -1:
+        elif version.find(' 7.') != -1 or version.find(' 8.') != -1:
             public.ExecShell("systemctl " + act + " sshd.service")
         else:
             public.ExecShell("/etc/init.d/sshd " + act)
@@ -428,7 +507,9 @@ if __name__ == '__main__':
     import sys
     type = sys.argv[1]
     if type=='login':
-        aa = ssh_security()
-        aa.login()
+        try:
+            aa = ssh_security()
+            aa.login()
+        except:pass
     else:
         pass

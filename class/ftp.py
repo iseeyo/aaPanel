@@ -4,10 +4,12 @@
 #  + -------------------------------------------------------------------
 # | Copyright (c) 2015-2016 宝塔软件(http:#bt.cn) All rights reserved.
 #  + -------------------------------------------------------------------
-# | Author: 黄文良 <287962566@qq.com>
+# | Author: hwliang <hwl@bt.cn>
 #  + -------------------------------------------------------------------
 import public,db,re,os,firewalls
-from BTPanel import session
+try:
+    from BTPanel import session
+except: pass
 class ftp:
     __runPath = None
     

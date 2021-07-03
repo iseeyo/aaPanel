@@ -4,7 +4,7 @@
 #-------------------------------------------------------------------
 # Copyright (c) 2015-2017 宝塔软件(http:#bt.cn) All rights reserved.
 #-------------------------------------------------------------------
-# Author: 邹浩文 <627622230@qq.com>
+# Author: zhwen <zhw@bt.cn>
 #-------------------------------------------------------------------
 
 #------------------------------
@@ -73,8 +73,8 @@ class SiteDirAuth:
         if not get.name:
             return public.returnMsg(False, 'Please enter the Name')
 
-        if site_dir[0] != "/" or site_dir[-1] != "/":
-            return public.returnMsg(False, 'Directory format is incorrect')
+        # if site_dir[0] != "/" or site_dir[-1] != "/":
+        #     return public.returnMsg(False, 'Directory format is incorrect')
             # site_dir = site_dir[1:]
             # if site_dir[-1] == "/":
             #     site_dir = site_dir[:-1]
@@ -138,6 +138,16 @@ class SiteDirAuth:
     def get_site_info(self,id):
         site_info = public.M('sites').where('id=?', (id,)).field('name,path').find()
         return {"site_name":site_info["name"],"site_path":site_info["path"]}
+
+    def change_dir_auth_file_nginx_phpver(self,site_name,phpv,auth_name):
+        file_path = "{setup_path}/panel/vhost/nginx/dir_auth/{site_name}/{auth_name}.conf".format(
+            setup_path=self.setup_path,site_name=site_name,auth_name=auth_name)
+        conf = public.readFile(file_path)
+        if not conf:
+            return False
+        rep = "include\s+enable-php-\d+\.conf;"
+        conf = re.sub(rep,'include enable-php-{}.conf;'.format(phpv),conf)
+        public.writeFile(file_path,conf)
 
     # 设置独立认证文件
     def set_dir_auth_file(self,site_path,site_name,name,username,site_dir,auth_file):
@@ -249,8 +259,9 @@ class SiteDirAuth:
                 os.remove(file_path)
             if not conf:
                 self.set_conf(site_name,"delete")
-            public.serviceReload()
-            return public.returnMsg(True,"Deleted successfully")
+            if not hasattr(get,'multiple'):
+                public.serviceReload()
+            return public.returnMsg(True,"DEL_SUCCESS")
 
     # 修改目录保护密码
     def modify_dir_auth_pass(self,get):
@@ -270,17 +281,21 @@ class SiteDirAuth:
         auth_file = '{setup_path}/pass/{site_name}/{name}.pass'.format(setup_path=self.setup_path,site_name=site_name,name=name)
         public.writeFile(auth_file,auth)
         public.serviceReload()
-        return public.returnMsg(True,"Modify successfully")
+        return public.returnMsg(True,"EDIT_SUCCESS")
 
     # 获取目录保护列表
     def get_dir_auth(self,get):
         '''
         get.id
+        get.sitename
         :param get:
         :return:
         '''
-        site_info = self.get_site_info(get.id)
-        site_name = site_info["site_name"]
+        if not hasattr(get, 'siteName'):
+            site_info = self.get_site_info(get.id)
+            site_name = site_info["site_name"]
+        else:
+            site_name = get.siteName
         conf = self._read_conf()
         if site_name in conf:
             return {site_name:conf[site_name]}

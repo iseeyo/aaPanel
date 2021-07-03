@@ -1,17 +1,18 @@
 # coding: utf-8
 # +-------------------------------------------------------------------
-# | 宝塔Linux面板 
+# | 宝塔Linux面板
 # +-------------------------------------------------------------------
 # | Copyright (c) 2015-2099 宝塔软件(http://bt.cn) All rights reserved.
 # +-------------------------------------------------------------------
-# | Author: 黄文良 <287962566@qq.com>
+# | Author: hwliang <hwl@bt.cn>
 # +-------------------------------------------------------------------
 
 # --------------------------------
 # 宝塔公共库
 # --------------------------------
 
-import json,os,sys,time,re,socket,importlib,binascii,base64,io
+import json,os,sys,time,re,socket,importlib,binascii,base64,io,string
+from random import choice
 _LAN_PUBLIC = None
 _LAN_LOG = None
 _LAN_TEMPLATE = None
@@ -19,28 +20,32 @@ _LAN_TEMPLATE = None
 if sys.version_info[0] == 2:
     reload(sys)
     sys.setdefaultencoding('utf8')
+else:
+    from importlib import reload
 
 def M(table):
+    """
+        @name 访问面板数据库
+        @author hwliang<hwl@bt.cn>
+        @table 被访问的表名(必需)
+        @return db.Sql object
+
+        ps: 默认访问data/default.db
+    """
     import db
-    sql = db.Sql()
-    return sql.table(table)
+    with db.Sql() as sql:
+        #sql = db.Sql()
+        return sql.table(table)
 
 def HttpGet(url,timeout = 6,headers = {}):
     """
-    发送GET请求
-    @url 被请求的URL地址(必需)
-    @timeout 超时时间默认60秒
-    return string
+        @name 发送GET请求
+        @author hwliang<hwl@bt.cn>
+        @url 被请求的URL地址(必需)
+        @timeout 超时时间默认60秒
+        @return string
     """
     if is_local(): return False
-    home = 'www.bt.cn'
-    host_home = 'data/home_host.pl'
-    old_url = url
-    if url.find(home) != -1:
-        if os.path.exists(host_home):
-            headers['host'] = home
-            url = url.replace(home,readFile(host_home))
-
     import http_requests
     res = http_requests.get(url,timeout=timeout,headers = headers)
     if res.status_code == 0:
@@ -53,6 +58,16 @@ def HttpGet(url,timeout = 6,headers = {}):
     return s_body
 
 def http_get_home(url,timeout,ex):
+    """
+        @name Get方式使用优选节点访问官网
+        @author hwliang<hwl@bt.cn>
+        @param url 当前官网URL地址
+        @param timeout 用于测试超时时间
+        @param ex 上一次错误的响应内容
+        @return string 响应内容
+
+        如果已经是优选节点，将直接返回ex
+    """
     try:
         home = 'www.bt.cn'
         if url.find(home) == -1: return ex
@@ -65,52 +80,59 @@ def http_get_home(url,timeout,ex):
             res = HttpGet(new_url,timeout,headers)
             if res:
                 writeFile("data/home_host.pl",host)
-                set_home_host(host)
+                # set_home_host(host)
                 return res
         return ex
     except: return ex
 
 
-def set_home_host(host):
-    ExecShell('sed -i "/www.bt.cn/d" /etc/hosts')
-    ExecShell("echo '' >> /etc/hosts")
-    ExecShell("echo '%s www.bt.cn' >> /etc/hosts" % host)
-    ExecShell('sed -i "/^\s*$/d" /etc/hosts')
+# def set_home_host(host):
+#     """
+#         @name 设置官网hosts
+#         @author hwliang<hwl@bt.cn>
+#         @param host IP地址
+#         @return void
+#     """
+#     ExecShell('sed -i "/www.bt.cn/d" /etc/hosts')
+#     ExecShell("echo '' >> /etc/hosts")
+#     ExecShell("echo '%s www.bt.cn' >> /etc/hosts" % host)
+#     ExecShell('sed -i "/^\s*$/d" /etc/hosts')
 
 def httpGet(url,timeout=6):
     return HttpGet(url,timeout)
 
 def HttpPost(url,data,timeout = 6,headers = {}):
     """
-    发送POST请求
-    @url 被请求的URL地址(必需)
-    @data POST参数，可以是字符串或字典(必需)
-    @timeout 超时时间默认60秒
-    return string
+        发送POST请求
+        @url 被请求的URL地址(必需)
+        @data POST参数，可以是字符串或字典(必需)
+        @timeout 超时时间默认60秒
+        return string
     """
     if is_local(): return False
-    home = 'www.bt.cn'
-    host_home = 'data/home_host.pl'
-    old_url = url
-    if url.find(home) != -1:
-        if os.path.exists(host_home):
-            headers['host'] = home
-            url = url.replace(home, readFile(host_home))
-
     import http_requests
     res = http_requests.post(url,data=data,timeout=timeout,headers = headers)
     if res.status_code == 0:
-        WriteLog('Request error',res.text)
         if old_url.find(home) != -1: return http_post_home(old_url,data,timeout,res.text)
         if headers: return False
         s_body = res.text
         return s_body
     s_body = res.text
-    del res
     return s_body
 
 
-def http_post_home(url, data, timeout, ex):
+def http_post_home(url,data,timeout,ex):
+    """
+        @name POST方式使用优选节点访问官网
+        @author hwliang<hwl@bt.cn>
+        @param url(string) 当前官网URL地址
+        @param data(dict) POST数据
+        @param timeout(int) 用于测试超时时间
+        @param ex(string) 上一次错误的响应内容
+        @return string 响应内容
+
+        如果已经是优选节点，将直接返回ex
+    """
     try:
         home = 'www.bt.cn'
         if url.find(home) == -1: return ex
@@ -123,24 +145,33 @@ def http_post_home(url, data, timeout, ex):
             res = HttpPost(new_url, data, timeout, headers)
             if res:
                 writeFile("data/home_host.pl", host)
-                set_home_host(host)
+                # set_home_host(host)
                 return res
         return ex
     except: return ex
 
-def httpPost(url, data, timeout=6):
-    return HttpPost(url, data, timeout)
+def httpPost(url,data,timeout=6):
+    """
+        @name 发送POST请求
+        @author hwliang<hwl@bt.cn>
+        @param url 被请求的URL地址(必需)
+        @param data POST参数，可以是字符串或字典(必需)
+        @param timeout 超时时间默认60秒
+        @return string
+    """
+    return HttpPost(url,data,timeout)
 
 def check_home():
     return True
 
 def Md5(strings):
     """
-    生成MD5
-    @strings 要被处理的字符串
-    return string(32)
+        @name 生成MD5
+        @author hwliang<hwl@bt.cn>
+        @param strings 要被处理的字符串
+        @return string(32)
     """
-    if type(strings) == str:
+    if type(strings) != bytes:
         strings = strings.encode()
     import hashlib
     m = hashlib.md5()
@@ -152,9 +183,10 @@ def md5(strings):
 
 def FileMd5(filename):
     """
-    生成文件的MD5
-    @filename 文件名
-    return string(32) or False
+        @name 生成文件的MD5
+        @author hwliang<hwl@bt.cn>
+        @param filename 文件名
+        @return string(32) or False
     """
     if not os.path.isfile(filename): return False
     import hashlib
@@ -171,9 +203,10 @@ def FileMd5(filename):
 
 def GetRandomString(length):
     """
-       取随机字符串
-       @length 要获取的长度
-       return string(length)
+       @name 取随机字符串
+       @author hwliang<hwl@bt.cn>
+       @param length 要获取的长度
+       @return string(length)
     """
     from random import Random
     strings = ''
@@ -186,18 +219,36 @@ def GetRandomString(length):
 
 def ReturnJson(status,msg,args=()):
     """
-    取通用Json返回
-    @status  返回状态
-    @msg  返回消息
-    return string(json)
+        @name 取通用Json返回
+        @author hwliang<hwl@bt.cn>
+        @param status  返回状态
+        @param msg  返回消息
+        @return string(json)
     """
     return GetJson(ReturnMsg(status, msg, args))
 
 def returnJson(status,msg,args=()):
+    """
+        @name 取通用Json返回
+        @author hwliang<hwl@bt.cn>
+        @param status  返回状态
+        @param msg  返回消息
+        @return string(json)
+    """
     return ReturnJson(status,msg,args)
 
 def ReturnMsg(status,msg,args = ()):
-    log_message = json.loads(ReadFile('BTPanel/static/language/' + GetLanguage() + '/public.json'))
+    """
+        @name 取通用dict返回
+        @author hwliang<hwl@bt.cn>
+        @param status  返回状态
+        @param msg  返回消息
+        @return dict  {"status":bool,"msg":string}
+    """
+    try:
+        log_message = json.loads(ReadFile('BTPanel/static/language/' + GetLanguage() + '/public.json'))
+    except:
+        log_message = {}
     keys = log_message.keys()
     if type(msg) == str:
         if msg in keys:
@@ -208,11 +259,23 @@ def ReturnMsg(status,msg,args = ()):
     return {'status':status,'msg':msg}
 
 def returnMsg(status,msg,args = ()):
+    """
+        @name 取通用dict返回
+        @author hwliang<hwl@bt.cn>
+        @param status  返回状态
+        @param msg  返回消息
+        @return dict  {"status":bool,"msg":string}
+    """
     return ReturnMsg(status,msg,args)
 
 
 def GetFileMode(filename):
-    '''取文件权限'''
+    """
+        @name 取文件权限字符串
+        @author hwliang<hwl@bt.cn>
+        @param filename  文件全路径
+        @return string  如：644/777/755
+    """
     stat = os.stat(filename)
     accept = str(oct(stat.st_mode)[-3:])
     return accept
@@ -241,7 +304,7 @@ def GetJson(data):
     try:
         return dumps(data,ensure_ascii=False)
     except:
-        return dumps(returnMsg(False,"Wrong response: %s" % str(data)))
+        return dumps(returnMsg(False,"WRONG_RESPONSE", (str(data))))
 
 def getJson(data):
     return GetJson(data)
@@ -264,11 +327,11 @@ def ReadFile(filename,mode = 'r'):
                 fp = open(filename, mode,encoding="utf-8")
                 f_body = fp.read()
                 fp.close()
-            except Exception as ex2:
-                WriteLog('Open File',str(ex2))
-                return False
+            except:
+                fp = open(filename, mode,encoding="GBK")
+                f_body = fp.read()
+                fp.close()
         else:
-            WriteLog('Open File',str(ex))
             return False
     return f_body
 
@@ -299,19 +362,22 @@ def WriteFile(filename,s_body,mode='w+'):
 def writeFile(filename,s_body,mode='w+'):
     return WriteFile(filename,s_body,mode)
 
-def WriteLog(type,logMsg,args=()):
+def WriteLog(type,logMsg,args=(),not_web = False):
     #写日志
     #try:
     import time,db,json
     username = 'system'
     uid = 1
-    try:
-        from BTPanel import session
-        if 'username' in session:
-            username = session['username']
-            uid = session['uid']
-    except:
-        pass
+    tmp_msg = ''
+    if not not_web:
+        try:
+            from BTPanel import session
+            if 'username' in session:
+                username = session['username']
+                uid = session['uid']
+                if session.get('debug') == 1: return
+        except:
+            pass
     global _LAN_LOG
     if not _LAN_LOG:
         _LAN_LOG = json.loads(ReadFile('BTPanel/static/language/' + GetLanguage() + '/log.json'))
@@ -324,7 +390,7 @@ def WriteLog(type,logMsg,args=()):
     if type in keys: type = _LAN_LOG[type]
     sql = db.Sql()
     mDate = time.strftime('%Y-%m-%d %X',time.localtime())
-    data = (uid,username,type,logMsg,mDate)
+    data = (uid,username,type,logMsg + tmp_msg,mDate)
     result = sql.table('logs').add('uid,username,type,log,addtime',data)
     #except:
         #pass
@@ -464,14 +530,17 @@ def GetLocalIp():
         if not ipaddress:
             url = 'http://pv.sohu.com/cityjson?ie=utf-8'
             m_str = HttpGet(url)
-            ipaddress = re.search(r'\d+.\d+.\d+.\d+',m_str).group(0)
+            if isinstance(m_str,bytes):
+                ipaddress = re.search('\d+.\d+.\d+.\d+', m_str.decode('utf-8')).group(0)
+            else:
+                ipaddress = re.search('\d+.\d+.\d+.\d+', m_str).group(0)
             WriteFile(filename,ipaddress)
         c_ip = check_ip(ipaddress)
         if not c_ip: return GetHost()
         return ipaddress
     except:
         try:
-            url = GetConfigValue('home') + '/Api/getIpAddress'
+            url = 'https://brandnew.aapanel.com/api/common/getClientIP'
             return HttpGet(url)
         except:
             return GetHost()
@@ -533,21 +602,62 @@ def phpReload(version):
     else:
         ExecShell('/etc/init.d/php-fpm-' + version + ' reload')
 
+def get_timeout(url,timeout=3):
+    try:
+        start = time.time()
+        result = int(httpGet(url,timeout))
+        return result,int((time.time() - start) * 1000 - 500)
+    except: return 0,False
+
 def get_url(timeout = 0.5):
     import json
     try:
+        pkey = 'node_url'
+        node_url =  cache_get(pkey)
+        if node_url: return node_url
         nodeFile = 'data/node.json'
         node_list = json.loads(readFile(nodeFile))
-        mnode = None
+        mnode1 = []
+        mnode2 = []
+        mnode3 = []
+        new_node_list = {}
         for node in node_list:
-            node['ping'] = get_timeout(node['protocol'] + node['address'] + ':' + node['port'] + '/check.txt')
+            node['net'],node['ping'] = get_timeout(node['protocol'] + node['address'] + ':' + node['port'] + '/net_test',1)
+            new_node_list[node['address']] = node['ping']
             if not node['ping']: continue
-            if not mnode: mnode = node
-            if node['ping'] < mnode['ping']: mnode = node
-            if mnode['ping'] < 50: break
-        return mnode['protocol'] + mnode['address'] + ':' + mnode['port']
+            if node['ping'] < 100:      #当响应时间<100ms且可用带宽大于1500KB时
+                if node['net'] > 1500:
+                    mnode1.append(node)
+                elif node['net'] > 1000:
+                    mnode3.append(node)
+            else:
+                if node['net'] > 1000:  #当响应时间>=100ms且可用带宽大于1000KB时
+                    mnode2.append(node)
+            if node['ping'] < 100:
+                if node['net'] > 3000: break #有节点可用带宽大于3000时，不再检查其它节点
+        if mnode1: #优选低延迟高带宽
+            mnode = sorted(mnode1,key= lambda  x:x['net'],reverse=True)
+        elif mnode3: #备选低延迟，中等带宽
+            mnode = sorted(mnode3,key= lambda  x:x['net'],reverse=True)
+        else: #终选中等延迟，中等带宽
+            mnode = sorted(mnode2,key= lambda  x:x['ping'],reverse=False)
+
+        if not mnode: return 'https://node.aapanel.com'
+
+        new_node_keys = new_node_list.keys()
+        for i in range(len(node_list)):
+            if node_list[i]['address'] in new_node_keys:
+                node_list[i]['ping'] = new_node_list[node_list[i]['address']]
+            else:
+                node_list[i]['ping'] = 500
+
+        new_node_list = sorted(node_list,key=lambda x: x['ping'],reverse=False)
+        writeFile(nodeFile,json.dumps(new_node_list))
+        node_url = mnode[0]['protocol'] + mnode[0]['address'] + ':' + mnode[0]['port']
+        cache_set(pkey,node_url,86400)
+        return node_url
     except:
-        return 'http://download.bt.cn'
+        return 'https://node.aapanel.com'
 
 
 #过滤输入
@@ -717,13 +827,19 @@ def getSpeed():
 def downloadFile(url,filename):
     try:
         if sys.version_info[0] == 2:
-            import urllib
-            urllib.urlretrieve(url, filename=filename, reporthook=downloadHook)
+            import requests
+            headers = {'User-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/84.0.4147.135 Safari/537.36'}
+            r = requests.get(url, headers=headers)
+            with open(filename,"wb") as f:
+                f.write(r.content)
         else:
             import urllib.request
+            opener = urllib.request.build_opener()
+            opener.addheaders = [('User-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/84.0.4147.135 Safari/537.36')]
+            urllib.request.install_opener(opener)
             urllib.request.urlretrieve(url, filename=filename, reporthook=downloadHook)
     except:
-        return False
+        return get_error_info()
 
 def downloadHook(count, blockSize, totalSize):
     speed = {'total':totalSize,'block':blockSize,'count':count}
@@ -756,9 +872,9 @@ def checkWebConfig():
     if not os.path.exists(f2 + 'btwaf'):
         f3 = f1 + 'nginx/btwaf.conf'
         if os.path.exists(f3): os.remove(f3)
-    if not os.path.exists(f2 + 'btwaf_httpd'):
-        f3 = f1 + 'apache/btwaf.conf'
-        if os.path.exists(f3): os.remove(f3)
+    # if not os.path.exists(f2 + 'btwaf_httpd'):
+    #     f3 = f1 + 'apache/btwaf.conf'
+    #     if os.path.exists(f3): os.remove(f3)
 
     if not os.path.exists(f2 + 'total'):
         f3 = f1 + 'apache/total.conf'
@@ -840,14 +956,6 @@ def hasPwd(password):
     import crypt
     return crypt.crypt(password,password)
 
-def get_timeout(url,timeout=3):
-    try:
-        start = time.time()
-        result = httpGet(url,timeout)
-        if result != 'True': return False
-        return int((time.time() - start) * 1000)
-    except: return False
-
 def getDate(format='%Y-%m-%d %X'):
     # 取格式时间
     return time.strftime(format, time.localtime())
@@ -875,12 +983,12 @@ def CheckMyCnf():
 PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:~/bin
 export PATH
 
-CN='125.88.182.172'
+CF='node.aapanel.com'
 HK='download.bt.cn'
 HK2='103.224.251.67'
 US='128.1.164.196'
 sleep 0.5;
-CN_PING=`ping -c 1 -w 1 $CN|grep time=|awk '{print $7}'|sed "s/time=//"`
+CN_PING=`ping -c 1 -w 1 $CF|grep time=|awk '{print $7}'|sed "s/time=//"`
 HK_PING=`ping -c 1 -w 1 $HK|grep time=|awk '{print $7}'|sed "s/time=//"`
 HK2_PING=`ping -c 1 -w 1 $HK2|grep time=|awk '{print $7}'|sed "s/time=//"`
 US_PING=`ping -c 1 -w 1 $US|grep time=|awk '{print $7}'|sed "s/time=//"`
@@ -888,10 +996,10 @@ US_PING=`ping -c 1 -w 1 $US|grep time=|awk '{print $7}'|sed "s/time=//"`
 echo "$HK_PING $HK" > ping.pl
 echo "$HK2_PING $HK2" >> ping.pl
 echo "$US_PING $US" >> ping.pl
-echo "$CN_PING $CN" >> ping.pl
+echo "$CF_PING $CF" >> ping.pl
 nodeAddr=`sort -V ping.pl|sed -n '1p'|awk '{print $2}'`
 if [ "$nodeAddr" == "" ];then
-    nodeAddr=$HK
+    nodeAddr=$CF
 fi
 
 Download_Url=http://$nodeAddr:5880
@@ -1172,6 +1280,13 @@ def to_string(lites):
             m_str += chr(mu)
     return m_str
 
+#解码
+def to_ord(string):
+    o  = []
+    for s in string:
+        o.append(ord(s))
+    return o
+
 #xss 防御
 def xssencode(text):
     import cgi
@@ -1230,11 +1345,18 @@ def get_page(count, p=1, rows=12, callback='', result='1,2,3,4,5,8'):
 # 取面板版本
 def version():
     try:
-        from BTPanel import g
-        return g.version
-    except:
         comm = ReadFile('/www/server/panel/class/common.py')
-        return re.search("g\.version\s*=\s*'(\d+\.\d+\.\d+)'", comm).groups()[0]
+        return re.search("g\.version\s*=\s*'(\d+\.\d+\.\d+)'",comm).groups()[0]
+    except:
+        return get_panel_version()
+
+def get_panel_version():
+    comm = ReadFile('/www/server/panel/class/common.py')
+    s_key = 'g.version = '
+    s_len = len(s_key)
+    s_leff = comm.find(s_key) + s_len
+    version = comm[s_leff:s_leff+6].strip().strip("'")
+    return version
 
 
 # 取文件或目录大小
@@ -1253,18 +1375,32 @@ def get_path_size(path):
 #写关键请求日志
 def write_request_log(reques = None):
     try:
+        from BTPanel import request,g,session
+        if session.get('debug') == 1: return
+        if request.path in ['/service_status','/favicon.ico','/task','/system','/ajax','/control','/data','/ssl']:
+            return False
+
         log_path = '/www/server/panel/logs/request'
         log_file = getDate(format='%Y-%m-%d') + '.json'
         if not os.path.exists(log_path): os.makedirs(log_path)
 
-        from flask import request
         log_data = []
         log_data.append(getDate())
-        log_data.append(GetClientIp())
+        log_data.append(GetClientIp() + ':' + str(request.environ.get('REMOTE_PORT')))
         log_data.append(request.method)
         log_data.append(request.full_path)
         log_data.append(request.headers.get('User-Agent'))
+        if request.method == 'POST':
+            args = str(request.form.to_dict())
+            if len(args) < 2048 and args.find('pass') == -1 and args.find('user') == -1:
+                log_data.append(args)
+            else:
+                log_data.append('{}')
+        else:
+            log_data.append('{}')
+        log_data.append(int((time.time() - g.request_time) * 1000))
         WriteFile(log_path + '/' + log_file,json.dumps(log_data) + "\n",'a+')
+        rep_sys_path()
     except: pass
 
 # 重载模块
@@ -1309,7 +1445,8 @@ def set_own(filename, user, group=None):
 
 #校验路径安全
 def path_safe_check(path,force=True):
-    checks = ['..','./','\\','%','$','^','&','*','~','#','"',"'",';','|','{','}','`']
+    if len(path) > 256: return False
+    checks = ['..','./','\\','%','$','^','&','*','~','"',"'",';','|','{','}','`']
     for c in checks:
         if path.find(c) != -1: return False
     if force:
@@ -1403,7 +1540,9 @@ def check_ip_panel():
         iplist = ReadFile(ip_file)
         if iplist:
             iplist = iplist.strip()
-            if not GetClientIp() in iplist.split(','):
+            client_ip = GetClientIp()
+            if client_ip in ['127.0.0.1','localhost','::1']: return False
+            if not client_ip in iplist.split(','):
                 errorStr = ReadFile('./BTPanel/templates/' + GetConfigValue('template') + '/error2.html')
                 try:
                     errorStr = errorStr.format(getMsg('PAGE_ERR_TITLE'),getMsg('PAGE_ERR_IP_H1'),getMsg('PAGE_ERR_IP_P1',(GetClientIp(),)),getMsg('PAGE_ERR_IP_P2'),getMsg('PAGE_ERR_IP_P3'),getMsg('NAME'),getMsg('PAGE_ERR_HELP'))
@@ -1416,6 +1555,8 @@ def check_domain_panel():
     tmp = GetHost()
     domain = ReadFile('data/domain.conf')
     if domain:
+        client_ip = GetClientIp()
+        if client_ip in ['127.0.0.1','localhost','::1']: return False
         if tmp.strip().lower() != domain.strip().lower():
             errorStr = ReadFile('./BTPanel/templates/' + GetConfigValue('template') + '/error2.html')
             try:
@@ -1445,20 +1586,21 @@ def auto_backup_panel():
         shutil.copytree(panel_paeh + '/data',backup_path + '/data')
         shutil.copytree(panel_paeh + '/config',backup_path + '/config')
         shutil.copytree(panel_paeh + '/vhost',backup_path + '/vhost')
+        ExecShell("chmod -R 600 {path};chown -R root.root {path}".format(path=b_path))
         time_now = time.time() - (86400 * 15)
         for f in os.listdir(b_path):
-            try:
-                if time.mktime(time.strptime(f, "%Y-%m-%d")) < time_now:
-                    path = b_path + '/' + f
-                    if os.path.exists(path): shutil.rmtree(path)
-            except: continue
-    except:pass
+            if time.mktime(time.strptime(f, "%Y-%m-%d")) < time_now:
+                path = b_path + '/' + f
+                if os.path.exists(path): shutil.rmtree(path)
+    except:
+        pass
+
+
 
 
 #检查端口状态
-def check_port_stat(port):
+def check_port_stat(port,localIP = '127.0.0.1'):
     import socket
-    localIP = '127.0.0.1'
     temp = {}
     temp['port'] = port
     temp['local'] = True
@@ -1550,22 +1692,22 @@ def en_hexb(data):
     if type(result) != str: result = result.decode('utf-8')
     return result
 
-def upload_file_url(filename):
-    try:
-        if os.path.exists(filename):
-            data = ExecShell('/usr/bin/curl https://scanner.baidu.com/enqueue -F archive=@%s' % filename)
-            data = json.loads(data[0])
-            time.sleep(1)
-            import requests
-            default_headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/67.0.3396.99 Safari/537.36'
-            }
-            data_list = requests.get(url=data['url'], headers=default_headers, verify=False)
-            return (data_list.json())
-        else:
-            return False
-    except:
-        return False
+# def upload_file_url(filename):
+#     try:
+#         if os.path.exists(filename):
+#             data = ExecShell('/usr/bin/curl https://scanner.baidu.com/enqueue -F archive=@%s' % filename)
+#             data = json.loads(data[0])
+#             time.sleep(1)
+#             import requests
+#             default_headers = {
+#                 'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/67.0.3396.99 Safari/537.36'
+#             }
+#             data_list = requests.get(url=data['url'], headers=default_headers, verify=False)
+#             return (data_list.json())
+#         else:
+#             return False
+#     except:
+#         return False
 
 #直接请求到PHP-FPM
 #version php版本
@@ -1573,23 +1715,182 @@ def upload_file_url(filename):
 #filename 要执行的php文件
 #args 请求参数
 #method 请求方式
-def request_php(version,uri,filename,args,method='GET',pdata='',timeout=3000):
-    import fastcgi_client
-    client= fastcgi_client.fastcgi_client('/tmp/php-cgi-'+version+'.sock',None, timeout, 0)
-    if type(args) == dict: args = url_encode(args)
+def request_php(version,uri,document_root,method='GET',pdata=b''):
+    import panelPHP
     if type(pdata) == dict: pdata = url_encode(pdata)
-    params = {
-                'REQUEST_METHOD': method,
-                'SCRIPT_FILENAME': filename,
-                'SCRIPT_NAME': uri,
-                'SERVER_PROTOCOL': 'HTTP/1.1',
-                'GATEWAY_INTERFACE': 'CGI/1.1',
-                'QUERY_STRING': args,
-                'CONTENT_TYPE': 'application/x-www-form-urlencoded',
-                'CONTENT_LENGTH': len(pdata)
-            }
-    result = client.request(params,pdata)
+    fpm_address = get_fpm_address(version)
+    p = panelPHP.FPM(fpm_address,document_root)
+    result = p.load_url_public(uri,pdata,method)
     return result
+
+
+def get_fpm_address(php_version):
+    '''
+        @name 获取FPM请求地址
+        @author hwliang<2020-10-23>
+        @param php_version string PHP版本
+        @return tuple or string
+    '''
+    fpm_address = '/tmp/php-cgi-{}.sock'.format(php_version)
+    php_fpm_file = '/www/server/php/{}/etc/php-fpm.conf'.format(php_version)
+    try:
+        fpm_conf = readFile(php_fpm_file)
+        tmp = re.findall(r"listen\s*=\s*(.+)",fpm_conf)
+        if not tmp: return fpm_address
+        if tmp[0].find('sock') != -1: return fpm_address
+        if tmp[0].find(':') != -1:
+            listen_tmp = tmp[0].split(':')
+            fpm_address = ('127.0.0.1',int(listen_tmp[1]))
+        else:
+            fpm_address = ('127.0.0.1',int(tmp[0]))
+        return fpm_address
+    except:
+        return fpm_address
+
+
+def get_php_proxy(php_version,webserver = 'nginx'):
+    '''
+        @name 获取PHP代理地址
+        @author hwliang<2020-10-24>
+        @param php_version string php版本  (52|53|54|55|56|70|71|72|73|74)
+        @param webserver string web服务器类型 (nginx|apache|ols)
+        return string
+    '''
+    php_address = get_fpm_address(php_version)
+    if isinstance(php_address,str):
+        if webserver == 'nginx':
+            return 'unix:{}'.format(php_address)
+        elif webserver == 'apache':
+            return 'unix:{}|fcgi://localhost'.format(php_address)
+    else:
+        if webserver == 'nginx':
+            return '{}:{}'.format(php_address[0],php_address[1])
+        elif webserver == 'apache':
+            return 'fcgi://{}:{}'.format(php_address[0],php_address[1])
+
+def get_php_version_conf(conf):
+    '''
+        @name 从指定配置文件获取PHP版本
+        @author hwliang<2020-10-24>
+        @param conf string 配置文件内容
+        @return string
+    '''
+    if not conf: return '00'
+    if conf.find('enable-php-') != -1:
+        rep = r"enable-php-([0-9]{2,3})\.conf"
+        tmp = re.findall(rep,conf)
+        if not tmp: return '00'
+    elif conf.find('/usr/local/lsws/lsphp') != -1:
+        rep = r"path\s*/usr/local/lsws/lsphp(\d+)/bin/lsphp"
+        tmp = re.findall(rep,conf)
+        if not tmp: return '00'
+    else:
+        rep = r"php-cgi-([0-9]{2,3})\.sock"
+        tmp = re.findall(rep,conf)
+        if not tmp:
+            rep = r'127.0.0.1:10(\d{2,2})1'
+            tmp = re.findall(rep,conf)
+            if not tmp:
+                return '00'
+    return tmp[0]
+
+
+def get_site_php_version(siteName):
+    '''
+        @name 获取指定网站当前使用的PHP版本
+        @author hwliang<2020-10-24>
+        @param siteName string 网站名称
+        @return string
+    '''
+    web_server = get_webserver()
+    conf = readFile('/www/server/panel/vhost/'+web_server+'/'+siteName+'.conf')
+    if web_server == 'openlitespeed':
+        conf = readFile('/www/server/panel/vhost/' + web_server + '/detail/' + siteName + '.conf')
+    return get_php_version_conf(conf)
+
+
+def sub_php_address(conf_file,rep,tsub,php_version):
+    '''
+        @name 替换新的PHP配置到配置文件
+        @author hwliang<2020-10-24>
+        @param conf_file string 配置文件全路径
+        @param rep string 用于查找目标替换内容的正则表达式
+        @param tsub string 新的内容
+        @param php_version string 指定PHP版本
+        @return bool
+    '''
+    if not os.path.isfile(conf_file): return False
+    if not os.path.exists(conf_file): return False
+    conf = readFile(conf_file)
+    if not conf: return False
+    #if conf.find('#PHP') == -1 and conf.find('pathinfo.conf') == -1: return False
+    phpv = get_php_version_conf(conf)
+    if phpv != php_version: return False
+    tmp = re.search(rep,conf)
+    if not tmp: return False
+    if tmp.group() == tsub: return False
+    conf = conf.replace(tmp.group(),tsub) #re.sub(rep,php_proxy,conf)
+    writeFile(conf_file,conf)
+    return True
+
+
+def sync_all_address():
+    '''
+        @name 同步所有PHP版本配置到配置文件
+        @author hwliang<2020-10-24>
+        @return void
+    '''
+    php_versions = ['52','53','54','55','56','70','71','72','73','74','75','80','81']
+    for phpv in php_versions:
+        sync_php_address(phpv)
+
+def sync_php_address(php_version):
+    '''
+        @name 同步PHP版本配置到所有配置文件
+        @author hwliang<2020-10-24>
+        @param php_version string PHP版本
+        @return void
+    '''
+    if not os.path.exists('/www/server/php/{}/bin/php'.format(php_version)): # 指定PHP版本是否安装
+        return False
+    ngx_rep = r"(unix:/tmp/php-cgi.*\.sock|127.0.0.1:\d+)"
+    apa_rep = r"(unix:/tmp/php-cgi.*\.sock\|fcgi://localhost|fcgi://127.0.0.1:\d+)"
+    ngx_proxy = get_php_proxy(php_version,'nginx')
+    apa_proxy = get_php_proxy(php_version,'apache')
+    is_write = False
+
+    #nginx的PHP配置文件
+    nginx_conf_path = '/www/server/nginx/conf'
+
+    if os.path.exists(nginx_conf_path):
+        for f_name in os.listdir(nginx_conf_path):
+            if f_name.find('enable-php') != -1:
+                conf_file = '/'.join((nginx_conf_path,f_name))
+                if sub_php_address(conf_file,ngx_rep,ngx_proxy,php_version):
+                    is_write = True
+    #nginx的phpmyadmin
+    # conf_file = '/www/server/nginx/conf/nginx.conf'
+    # if os.path.exists(conf_file):
+    #     if sub_php_address(conf_file,ngx_rep,ngx_proxy,php_version):
+    #         is_write = True
+
+    #apache的网站配置文件
+    apache_conf_path = '/www/server/panel/vhost/apache'
+    if os.path.exists(apache_conf_path):
+        for f_name in os.listdir(apache_conf_path):
+            conf_file = '/'.join((apache_conf_path,f_name))
+            if sub_php_address(conf_file,apa_rep,apa_proxy,php_version):
+                is_write = True
+    #apache的phpmyadmin
+    conf_file = '/www/server/apache/conf/extra/httpd-vhosts.conf'
+    if os.path.exists(conf_file):
+        if sub_php_address(conf_file,apa_rep,apa_proxy,php_version):
+            is_write = True
+
+    if is_write: serviceReload()
+    return True
+
+
 
 
 def url_encode(data):
@@ -1599,6 +1900,15 @@ def url_encode(data):
         pdata = urllib.parse.urlencode(data).encode('utf-8')
     else:
         pdata = urllib.urlencode(data)
+    return pdata
+
+def url_decode(data):
+    if type(data) == str: return data
+    import urllib
+    if sys.version_info[0] != 2:
+        pdata = urllib.parse.urldecode(data).encode('utf-8')
+    else:
+        pdata = urllib.urldecode(data)
     return pdata
 
 
@@ -1626,7 +1936,7 @@ def import_cdn_plugin():
     try:
         import static_cdn_main
     except:
-        sys.path.insert(0,plugin_path)
+        package_path_append(plugin_path)
         import static_cdn_main
 
 
@@ -1640,6 +1950,8 @@ def get_cdn_hosts():
 
 def get_cdn_url():
     try:
+        if os.path.exists('plugin/static_cdn/not_open.pl'):
+            return False
         from BTPanel import cache
         cdn_url = cache.get('cdn_url')
         if cdn_url: return cdn_url
@@ -1684,6 +1996,511 @@ def aes_decrypt(data,key):
         aes_obj = panelAes.aescrypt_py3(key)
         return aes_obj.aesdecrypt(data)
 
+#清理大日志文件
+def clean_max_log(log_file,max_size = 100,old_line = 100):
+    if not os.path.exists(log_file): return False
+    max_size = 1024 * 1024 * max_size
+    if os.path.getsize(log_file) > max_size:
+        try:
+            old_body = GetNumLines(log_file,old_line)
+            writeFile(log_file,old_body)
+        except:
+            print(get_error_info())
+
+#获取证书哈希
+def get_cert_data(path):
+    import panelSSL
+    get = dict_obj()
+    get.certPath = path
+    data = panelSSL.panelSSL().GetCertName(get)
+    return data
+
+# 获取系统发行版
+def get_linux_distribution():
+    distribution = 'ubuntu'
+    redhat_file = '/etc/redhat-release'
+    if os.path.exists(redhat_file):
+        try:
+            tmp = readFile(redhat_file).split()[3][0]
+            distribution = 'centos{}'.format(tmp)
+        except:
+            distribution = 'centos7'
+    return distribution
+
+def long2ip(ips):
+    '''
+        @name 将整数转换为IP地址
+        @author hwliang<2020-06-11>
+        @param ips string(ip地址整数)
+        @return ipv4
+    '''
+    i1 = int(ips / (2 ** 24))
+    i2 = int((ips - i1 * ( 2 ** 24 )) / ( 2 ** 16 ))
+    i3 = int(((ips - i1 * ( 2 ** 24 )) - i2 * ( 2 ** 16 )) / ( 2 ** 8))
+    i4 = int(((ips - i1 * ( 2 ** 24 )) - i2 * ( 2 ** 16 )) - i3 * ( 2 ** 8))
+    return "{}.{}.{}.{}".format(i1,i2,i3,i4)
+
+def ip2long(ip):
+    '''
+        @name 将IP地址转换为整数
+        @author hwliang<2020-06-11>
+        @param ip string(ipv4)
+        @return long
+    '''
+    ips = ip.split('.')
+    if len(ips) != 4: return 0
+    iplong = 2 ** 24 * int(ips[0]) + 2 ** 16 * int(ips[1])  + 2 ** 8 * int(ips[2])  + int(ips[3])
+    return iplong
+
+def is_local_ip(ip):
+    '''
+        @name 判断是否为本地(内网)IP地址
+        @author hwliang<2021-03-26>
+        @param ip string(ipv4)
+        @return bool
+    '''
+    patt = r"^(192\.168|127|10|172\.(16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31))\."
+    if re.match(patt,ip): return True
+    return False
+
+#获取debug日志
+def get_debug_log():
+    from BTPanel import request
+    return GetClientIp() +':'+ str(request.environ.get('REMOTE_PORT')) + '|' + str(int(time.time())) + '|' + get_error_info()
+
+#获取sessionid
+def get_session_id():
+    from BTPanel import request
+    session_id =  request.cookies.get('SESSIONID','')
+    if not re.findall(r"^([\w\.-]{64,64})$",session_id): return GetRandomString(64)
+    return session_id
+
+#尝试自动恢复面板数据库
+def rep_default_db():
+    db_path = '/www/server/panel/data/'
+    db_file = db_path + 'default.db'
+    db_tmp_backup = db_path + 'default_' + format_date("%Y%m%d_%H%M%S") + ".db"
+
+    panel_backup = '/www/backup/panel'
+    bak_list = os.listdir(panel_backup)
+    if not bak_list: return False
+    bak_list = sorted(bak_list,reverse=True)
+    db_bak_file = ''
+    for d_name in bak_list:
+        db_bak_file = panel_backup + '/' + d_name + '/data/default.db'
+        if not os.path.exists(db_bak_file): continue
+        if os.path.getsize(db_bak_file) < 17408: continue
+        break
+
+    if not db_bak_file: return False
+    ExecShell("\cp -arf {} {}".format(db_file,db_tmp_backup))
+    ExecShell("\cp -arf {} {}".format(db_bak_file,db_file))
+    return True
+
+
+
+def chdck_salt():
+    '''
+        @name 检查所有用户密码是否加盐，若没有则自动加上
+        @author hwliang<2020-07-08>
+        @return void
+    '''
+
+    if not M('sqlite_master').where('type=? AND name=? AND sql LIKE ?', ('table', 'users','%salt%')).count():
+        M('users').execute("ALTER TABLE 'users' ADD 'salt' TEXT",())
+    u_list = M('users').where('salt is NULL',()).field('id,username,password,salt').select()
+    if isinstance(u_list,str):
+        if u_list.find('no such table: users') != -1:
+            rep_default_db()
+            if not M('sqlite_master').where('type=? AND name=? AND sql LIKE ?', ('table', 'users','%salt%')).count():
+                M('users').execute("ALTER TABLE 'users' ADD 'salt' TEXT",())
+            u_list = M('users').where('salt is NULL',()).field('id,username,password,salt').select()
+
+    for u_info in u_list:
+        salt = GetRandomString(12) #12位随机
+        pdata = {}
+        pdata['password'] = md5(md5(u_info['password']+'_bt.cn') + salt)
+        pdata['salt'] = salt
+        M('users').where('id=?',(u_info['id'],)).update(pdata)
+
+
+def get_login_token():
+    token_s = readFile('/www/server/panel/data/login_token.pl')
+    if not token_s: return GetRandomString(32)
+    return token_s
+
+def get_sess_key():
+    from BTPanel import session
+    return md5(get_login_token() + session.get('request_token_head',''))
+
+
+def password_salt(password,username=None,uid=None):
+    '''
+        @name 为指定密码加盐
+        @author hwliang<2020-07-08>
+        @param password string(被md5加密一次的密码)
+        @param username string(用户名) 可选
+        @param uid int(uid) 可选
+        @return string
+    '''
+    chdck_salt()
+    if not uid:
+        if not username:
+            raise Exception('username或uid必需传一项')
+        uid = M('users').where('username=?',(username,)).getField('id')
+    salt = M('users').where('id=?',(uid,)).getField('salt')
+    return md5(md5(password+'_bt.cn')+salt)
+
+# 备份配置文件
+def back_file(file, act=None):
+    """
+        @name 备份配置文件
+        @author zhwen<zhw@bt.cn>
+        @param file 需要备份的文件
+        @param act 如果存在，则备份一份作为默认配置
+    """
+    file_type = "_bak"
+    if act:
+        file_type = "_def"
+    ExecShell("/usr/bin/cp -p {0} {1}".format(file, file + file_type))
+
+# 还原配置文件
+def restore_file(file, act=None):
+    """
+        @name 还原配置文件
+        @author zhwen<zhw@bt.cn>
+        @param file 需要还原的文件
+        @param act 如果存在，则还原默认配置
+    """
+    file_type = "_bak"
+    if act:
+        file_type = "_def"
+    ExecShell("/usr/bin/cp -p {1} {0}".format(file, file + file_type))
+
+
+def package_path_append(path):
+    if not path in sys.path:
+        sys.path.insert(0, path)
+
+
+def rep_sys_path():
+    sys_path = []
+    for p in sys.path:
+        if p in sys_path: continue
+        sys_path.append(p)
+    sys.path = sys_path
+
+
+def get_ssh_port():
+    '''
+        @name 获取本机SSH端口
+        @author hwliang<2020-08-07>
+        @return int
+    '''
+    s_file = '/etc/ssh/sshd_config'
+    conf = readFile(s_file)
+    if not conf: conf = ''
+    rep = r"#*Port\s+([0-9]+)\s*\n"
+    tmp1 = re.search(rep, conf)
+    ssh_port = 22
+    if tmp1:
+        ssh_port = int(tmp1.groups(0)[0])
+    return ssh_port
+
+def set_error_num(key,empty = False,expire=3600):
+    '''
+        @name 设置失败次数(每调用一次+1)
+        @author hwliang<2020-08-21>
+        @param key<string> 索引
+        @param empty<bool> 是否清空计数
+        @param expire<int> 计数器生命周期(秒)
+        @return bool
+    '''
+    from BTPanel import cache
+    key = md5(key)
+    num = cache.get(key)
+    if not num:
+        num = 0
+    else:
+        if empty:
+            cache.delete(key)
+            return True
+    cache.set(key,num + 1,expire)
+    return True
+
+def get_error_num(key,limit=False):
+    '''
+        @name 获取失败次数
+        @author hwliang<2020-08-21>
+        @param key<string> 索引
+        @param limit<False or int> 如果为False，则直接返回失败次数，否则与失败次数比较，若大于失败次数返回True，否则返回False
+        @return int or bool
+    '''
+    from BTPanel import cache
+    key = md5(key)
+    num = cache.get(key)
+    if not num: num = 0
+    if not limit:
+        return num
+    if limit > num:
+        return True
+    return False
+
+
+def get_menus():
+    '''
+        @name 获取菜单列表
+        @author hwliang<2020-08-31>
+        @return list
+    '''
+    from BTPanel import session
+    data = json.loads(ReadFile('config/menu.json'))
+    hide_menu = ReadFile('config/hide_menu.json')
+    debug = session.get('debug')
+    if hide_menu:
+        hide_menu = json.loads(hide_menu)
+        show_menu = []
+        for i in range(len(data)):
+            if data[i]['id'] in hide_menu: continue
+            if data[i]['id'] == "memuAxterm":
+                if debug: continue
+            show_menu.append(data[i])
+        data = show_menu
+        del(hide_menu)
+        del(show_menu)
+    menus = sorted(data, key=lambda x: x['sort'])
+    return menus
+
+
+#取CURL路径
+def get_curl_bin():
+    '''
+        @name 取CURL执行路径
+        @author hwliang<2020-09-01>
+        @return string
+    '''
+    c_bin = ['/usr/local/curl2/bin/curl','/usr/local/curl/bin/curl','/usr/bin/curl']
+    for cb in c_bin:
+        if os.path.exists(cb): return cb
+    return 'curl'
+
+
+#设置防跨站配置
+def set_open_basedir():
+    try:
+        fastcgi_file = '/www/server/nginx/conf/fastcgi.conf'
+        if os.path.exists(fastcgi_file):
+            fastcgi_body = readFile(fastcgi_file)
+            if fastcgi_body.find('bt_safe_dir') == -1:
+                fastcgi_body = fastcgi_body + "\n"+'fastcgi_param  PHP_ADMIN_VALUE    "$bt_safe_dir=$bt_safe_open";'
+                writeFile(fastcgi_file,fastcgi_body)
+
+        proxy_file = '/www/server/nginx/conf/proxy.conf'
+        if os.path.exists(proxy_file):
+            proxy_body = readFile(proxy_file)
+            if proxy_body.find('bt_safe_dir') == -1:
+                proxy_body = proxy_body + "\n"+'''map "baota_dir" $bt_safe_dir {
+    default "baota_dir";
+}
+map "baota_open" $bt_safe_open {
+    default "baota_open";
+} '''
+                writeFile(proxy_file,proxy_body)
+
+        open_basedir_path = '/www/server/panel/vhost/open_basedir/nginx'
+        if not os.path.exists(open_basedir_path):
+            os.makedirs(open_basedir_path,384)
+
+        site_list = M('sites').field('id,name,path').select()
+        for site_info in site_list:
+            set_site_open_basedir_nginx(site_info['name'])
+    except: return
+
+
+#处理指定站点的防跨站配置 for Nginx
+def set_site_open_basedir_nginx(siteName):
+    try:
+        return
+        open_basedir_path = '/www/server/panel/vhost/open_basedir/nginx'
+        if not os.path.exists(open_basedir_path):
+            os.makedirs(open_basedir_path,384)
+        config_file = '/www/server/panel/vhost/nginx/{}.conf'.format(siteName)
+        open_basedir_file = "/".join(
+            (open_basedir_path,'{}.conf'.format(siteName))
+        )
+        if not os.path.exists(config_file): return
+        if not os.path.exists(open_basedir_file):
+            writeFile(open_basedir_file,'')
+        config_body = readFile(config_file)
+        if config_body.find(open_basedir_path) == -1:
+            config_body = config_body.replace("include enable-php","include {};\n\t\tinclude enable-php".format(open_basedir_file))
+            writeFile(config_file,config_body)
+
+        root_path = re.findall(r"root\s+(.+);",config_body)[0]
+        if not root_path: return
+        userini_file = root_path + '/.user.ini'
+        if not os.path.exists(userini_file):
+            writeFile(open_basedir_file,'')
+            return
+        userini_body = readFile(userini_file)
+        if not userini_body: return
+        if userini_body.find('open_basedir') == -1:
+            writeFile(open_basedir_file,'')
+            return
+
+        open_basedir_conf = re.findall("open_basedir=(.+)",userini_body)
+        if not open_basedir_conf: return
+        open_basedir_conf = open_basedir_conf[0]
+        open_basedir_body = '''set $bt_safe_dir "open_basedir";
+set $bt_safe_open "{}";'''.format(open_basedir_conf)
+        writeFile(open_basedir_file,open_basedir_body)
+    except: return
+
+
+def run_thread(fun,args = (),daemon=False):
+    '''
+        @name 使用线程执行指定方法
+        @author hwliang<2020-10-27>
+        @param fun {def} 函数对像
+        @param args {tuple} 参数元组
+        @param daemon {bool} 是否守护线程
+        @return bool
+    '''
+    import threading
+    p = threading.Thread(target=fun,args=args)
+    p.setDaemon(daemon)
+    p.start()
+    return True
+
+def check_domain_cloud(domain):
+    run_thread(cloud_check_domain,(domain,))
+
+def cloud_check_domain(domain):
+    '''
+        @name 从云端验证域名的可访问性,并将结果保存到文件
+        @author hwliang<2020-12-10>
+        @param domain {string} 被验证的域名
+        @return void
+    '''
+    try:
+        check_domain_path = '/www/server/panel/data/check_domain/'
+        if not os.path.exists(check_domain_path):
+            os.makedirs(check_domain_path,384)
+        result = httpPost('https://www.aapanel.com/api/panel/checkDomain',{"domain":domain})
+        cd_file = check_domain_path + domain +'.pl'
+        writeFile(cd_file,result)
+    except:
+        pass
+
+
+def send_file(data,fname='',mimetype = ''):
+    '''
+        @name 以文件流的形式返回
+        @author heliang<2020-10-27>
+        @param data {bytes|string} 文件数据或路径
+        @param mimetype {string} 文件类型
+        @param fname {string} 文件名
+        @return Response
+    '''
+    d_type = type(data)
+    from io import BytesIO,StringIO
+    from flask import send_file as send_to
+    if d_type == bytes:
+        fp = BytesIO(data)
+    else:
+        if len(data) < 128:
+            if os.path.exists(data):
+                fp = data
+                if not fname:
+                    fname = os.path.basename(fname)
+            else:
+                fp = StringIO(data)
+        else:
+            fp = StringIO(data)
+
+    if not mimetype: mimetype = "application/octet-stream"
+    if not fname: fname = 'doan.txt'
+
+    return send_to(fp,
+                    mimetype=mimetype,
+                    as_attachment=True,
+                    add_etags=True,
+                    conditional=True,
+                    attachment_filename=fname,
+                    cache_timeout=0)
+
+def gen_password(length=8,chars=string.ascii_letters+string.digits):
+    return ''.join([choice(chars) for i in range(length)])
+
+def get_ipaddress():
+    '''
+        @name 获取本机IP地址
+        @author hwliang<2020-11-24>
+        @return list
+    '''
+    ipa_tmp = ExecShell("ip a |grep inet|grep -v inet6|grep -v 127.0.0.1|grep -v 'inet 192.168.'|grep -v 'inet 10.'|awk '{print $2}'|sed 's#/[0-9]*##g'")[0].strip()
+    iplist = ipa_tmp.split('\n')
+    return iplist
+
+def get_oem_name():
+    '''
+        @name 获取OEM名称
+        @author hwliang<2021-03-24>
+        @return string
+    '''
+    oem = ''
+    oem_file = '/www/server/panel/data/o.pl'
+    if os.path.exists(oem_file):
+        oem = readFile(oem_file)
+        if oem: oem = oem.strip()
+    return oem
+
+def fetch_disk_SN():
+    r,e = ExecShell("fdisk -l |grep 'Disk identifier' |awk {'print $3'}")
+    if r:
+        return r.split('\n')[0]
+
+def fetch_cpu_ID():
+    r, e = ExecShell("cat /proc/cpuinfo|grep microcode|awk -F':' '{print $2}'")
+    if r:
+        return r.split('\n')[0]
+
+def get_hostname():
+    import socket
+    return socket.getfqdn(socket.gethostname())
+
+def get_platform():
+    import platform
+    return platform.platform()
+
+def get_memory():
+    import psutil
+    return psutil.virtual_memory().total
+
+def fetch_env_info():
+    import panelAuth
+    userInfo = panelAuth.panelAuth().create_serverid(None)
+    try:
+        return {'ip': GetLocalIp(),
+         'is_ipv6': 0,
+         'os': get_platform(),
+         'mac': get_mac_address(),
+         'hdid': fetch_disk_SN(),
+         'ramid': get_memory(),
+         'cpuid': fetch_cpu_ID(),
+         'server_name': get_hostname(),
+         'install_code': userInfo['server_id']
+         }
+    except:
+        return {}
+
+def arequests(method,url,data=None,timeout=3):
+    import threading
+    if method == 'post':
+        method = httpPost
+    else:
+        method = httpGet
+    threading.Thread(target=method, args=(url,data,timeout)).start()
 
 #取通用对象
 class dict_obj:
@@ -1694,4 +2511,357 @@ class dict_obj:
     def __delitem__(self,key): delattr(self,key)
     def __delattr__(self, key): delattr(self,key)
     def get_items(self): return self
+    def get(self,key,default='',format='',limit = []):
+        '''
+            @name 获取指定参数
+            @param key<string> 参数名称，允许在/后面限制参数格式，请参考参数值格式(format)
+            @param default<string> 默认值，默认空字符串
+            @param format<string>  参数值格式(int|str|float|json|xss|path|url|ip|ipv4|ipv6|letter|mail|phone|正则表达式|>1|<1|=1)，默认为空
+            @param limit<list> 限制参数值内容
+            @param return mixed
+        '''
+        if key.find('/') != -1:
+            key,format = key.split('/')
+        result = getattr(self,key,default).strip()
+        if format:
+            if format in ['str','string','s']:
+                result = str(result)
+            elif format in ['int','d']:
+                try:
+                    result = int(result)
+                except:
+                    raise ValueError("Parameters: {}, requires int type data".format(key))
+            elif format in ['float','f']:
+                try:
+                    result = float(result)
+                except:
+                    raise ValueError("Parameters: {}, float type data required".format(key))
+            elif format in ['json','j']:
+                try:
+                    result = json.loads(result)
+                except:
+                    raise ValueError("Parameters: {}, requires JSON string".format(key))
+            elif format in ['xss','x']:
+                result = xssencode(result)
+            elif format in ['path','p']:
+                if not path_safe_check(result):
+                    raise ValueError("Parameters: {}, the correct path format is required".format(key))
+                result = result.replace('//','/')
+            elif format in ['url','u']:
+                regex = re.compile(
+                     r'^(?:http|ftp)s?://'
+                     r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|'
+                     r'localhost|'
+                     r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
+                     r'(?::\d+)?'
+                     r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+                if not re.match(regex,result):
+                    raise ValueError('Parameters: {}, the correct URL format is required'.format(key))
+            elif format in ['ip','ipaddr','i','ipv4','ipv6']:
+                if format is 'ipv4':
+                    if not is_ipv4(result):
+                        raise ValueError('Parameters: {}, the correct ipv4 address is required'.format(key))
+                elif format is 'ipv6':
+                    if not is_ipv6(result):
+                        raise ValueError('Parameters: {}, the correct ipv6 address is required'.format(key))
+                else:
+                    if not is_ipv4(result) and not is_ipv6(result):
+                        raise ValueError('Parameters: {}, the correct ipv4/ipv6 address is required'.format(key))
+            elif format in ['w','letter']:
+                if not re.match(r'^\w+$',result):
+                    raise ValueError('Parameters: {}, the requirement can only be composed of English letters'.format(key))
+            elif format in ['email','mail','m']:
+                if not re.match(r"^.+\\@(\\[?)[a-zA-Z0-9\\-\\.]+\\.([a-zA-Z]{2,3}|[0-9]{1,3})(\\]?)$",result):
+                    raise ValueError("Parameters: {}, the correct email address format is required".format(key))
+            elif format in ['phone','mobile','m']:
+                if not re.match("^[0-9]{11,11}$",result):
+                    raise ValueError("Parameters: {}, mobile phone number format required".format(key))
+            elif re.match(r"^[<>=]\d+$",result):
+                operator = format[0]
+                length = int(format[1:].strip())
+                result_len = len(result)
+                error_obj = ValueError("Parameters: {}, the required length is {}".format(key,format))
+                if operator is '=':
+                    if result_len != length:
+                        raise error_obj
+                elif operator is '>':
+                    if result_len < length:
+                        raise error_obj
+                else:
+                    if result_len > length:
+                        raise error_obj
+            elif format[0] in ['^','(','[','\\','.'] or format[-1] in ['$',')',']','+','}']:
+                if not re.match(format,result):
+                    raise ValueError("The format of the specified parameter is incorrect, {}:{}".format(key,format))
 
+        if limit:
+            if not result in limit:
+                raise ValueError("The specified parameter value range is incorrect, {}:{}".format(key,limit))
+        return result
+
+
+
+
+
+
+
+
+#实例化定目录下的所有模块
+class get_modules:
+
+    def __contains__(self, key):
+        return self.get_attr(key)
+
+    def __setitem__(self, key, value):
+        setattr(self,key,value)
+
+    def get_attr(self,key):
+        '''
+            尝试获取模块，若为字符串，则尝试实例化模块，否则直接返回模块对像
+        '''
+        res = getattr(self,key)
+        if isinstance(res,str):
+            try:
+                tmp_obj = __import__(key)
+                reload(tmp_obj)
+                setattr(self,key,tmp_obj)
+                return tmp_obj
+            except:
+                raise Exception(get_error_info())
+        return res
+
+    def __getitem__(self, key):
+        return self.get_attr(key)
+
+    def __delitem__(self,key):
+        delattr(self,key)
+
+    def __delattr__(self, key):
+        delattr(self,key)
+
+    def get_items(self):
+        return self
+
+    def __init__(self,path = "class",limit = None):
+        '''
+            @name 加载指定目录下的模块
+            @author hwliang<2020-08-03>
+            @param path<string> 指定目录，可指定绝对目录，也可指定相对于/www/server/panel的相对目录 默认加载class目录
+            @param limit<string/list/tuple> 指定限定加载的模块名称，默认加载path目录下的所有模块
+            @param object
+
+            @example
+                p = get_modules('class')
+                if 'public' in p:
+                    md5_str = p.public.md5('test')
+                    md5_str = p['public'].md5('test')
+                    md5_str = getattr(p['public'],'md5')('test')
+                else:
+                    print(p.__dict__)
+        '''
+        os.chdir('/www/server/panel')
+        exp_files = ['__init__.py','__pycache__']
+        if not path in sys.path:
+            sys.path.insert(0,path)
+        for fname in os.listdir(path):
+            if fname in exp_files: continue
+            filename = '/'.join([path,fname])
+            if os.path.isfile(filename):
+                if not fname[-3:] in ['.py','.so']: continue
+                mod_name = fname[:-3]
+            else:
+                c_file = '/'.join((filename,'__init__.py'))
+                if not os.path.exists(c_file):
+                    continue
+                mod_name = fname
+
+            if limit:
+                if not isinstance(limit,list) and not isinstance(limit,tuple):
+                    limit = (limit,)
+                if not mod_name in limit:
+                    continue
+
+            setattr(self,mod_name,mod_name)
+
+#检查App和小程序的绑定
+def check_app(check='app'):
+    path='/www/server/panel/'
+    if check=='app':
+        try:
+            if not os.path.exists(path+'data/user.json') and os.path.exists(path+'config/api.json') and not os.path.exists(path+'plugin/app/user.json'):return False
+            if os.path.exists(path+'plugin/app/user.json'):
+                wxapp = json.loads(readFile(path+'plugin/app/user.json'))
+                if wxapp:return True
+            if os.path.exists(path+'data/user.json'):
+                app_info = json.loads(readFile(path+'data/user.json'))
+                if app_info:return True
+            if os.path.exists(path+'config/api.json'):
+                btapp_info = json.loads(readFile(path+'config/api.json'))
+                if not  btapp_info['open']:return False
+                if not 'apps' in btapp_info:return False
+                if not btapp_info['apps']:return False
+                return True
+            return False
+        except:
+            return False
+    elif check=='app_bind':
+        if not os.path.exists(path + 'config/api.json'):return False
+        btapp_info = json.loads(readFile(path +'config/api.json'))
+        if not btapp_info: return False
+        if not btapp_info['open']: return False
+        return True
+    elif check=='wxapp':
+        if not os.path.exists(path+'plugin/app/user.json'):return False
+        app_info = json.loads(readFile(path+'plugin/app/user.json'))
+        if not app_info: return False
+        return True
+
+#宝塔邮件报警
+def send_mail(title,body,is_logs=False,is_type="aapanel login reminder"):
+    if is_logs:
+        try:
+            import send_mail
+            send_mail22 = send_mail.send_mail()
+            tongdao = send_mail22.get_settings()
+            if tongdao['user_mail']['mail_list']==0:return false
+            if not tongdao['user_mail']['info']: return false
+            if len(tongdao['user_mail']['mail_list'])==1:
+                send_mail=tongdao['user_mail']['mail_list'][0]
+                send_mail22.qq_smtp_send(send_mail, title=title, body=body)
+            else:
+                send_mail22.qq_smtp_send(tongdao['user_mail']['mail_list'], title=title, body=body)
+            if is_logs:
+                WriteLog2(is_type, body)
+        except:
+            return False
+    else:
+        try:
+            import send_mail
+            send_mail22 = send_mail.send_mail()
+            tongdao = send_mail22.get_settings()
+            if tongdao['user_mail']['mail_list'] == 0: return false
+            if not tongdao['user_mail']['info']: return false
+            if len(tongdao['user_mail']['mail_list']) == 1:
+                send_mail = tongdao['user_mail']['mail_list'][0]
+                return send_mail22.qq_smtp_send(send_mail, title=title, body=body)
+            else:
+                return send_mail22.qq_smtp_send(tongdao['user_mail']['mail_list'], title=title, body=body)
+        except:
+            return False
+
+#宝塔钉钉 or 微信告警
+def send_dingding(body,is_logs=False,is_type="aapanel login reminder"):
+    if is_logs:
+        try:
+            import send_mail
+            send_mail22 = send_mail.send_mail()
+            tongdao = send_mail22.get_settings()
+            if not tongdao['dingding']['info']: return false
+            tongdao = send_mail22.get_settings()
+            if is_logs:
+                WriteLog2(is_type,body)
+            return send_mail22.dingding_send(body)
+        except:
+            return False
+    else:
+        try:
+            import send_mail
+            send_mail22 = send_mail.send_mail()
+            tongdao = send_mail22.get_settings()
+            if not tongdao['dingding']['info']: return false
+            tongdao = send_mail22.get_settings()
+            return send_mail22.dingding_send(body)
+        except:return False
+
+#获取服务器IP
+def get_ip():
+    if os.path.exists('/www/server/panel/data/iplist.txt'):
+        data=ReadFile('/www/server/panel/data/iplist.txt')
+        return data.strip()
+    else:return '127.0.0.1'
+
+#获取服务器内网Ip
+def get_local_ip():
+    try:
+        ret=ExecShell("ip addr | grep -E -o '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | grep -E -v \"^127\.|^255\.|^0\.\" | head -n 1")
+        local_ip=ret[0].strip()
+        return local_ip
+    except:return '127.0.0.1'
+
+def create_logs():
+    import db
+    sql = db.Sql()
+    if not sql.table('sqlite_master').where('type=? AND name=?', ('table', 'logs2')).count():
+        csql = '''CREATE TABLE `logs2` (
+  `id` INTEGER PRIMARY KEY AUTOINCREMENT,
+  `type` TEXT,
+  `log` TEXT,
+  `addtime` TEXT
+, uid integer DEFAULT '1', username TEXT DEFAULT 'system')'''
+        sql.execute(csql, ())
+
+def WriteLog2(type,logMsg,args=(),not_web = False):
+    import db
+    create_logs()
+    username = 'system'
+    uid = 1
+    tmp_msg = ''
+    sql = db.Sql()
+    mDate = time.strftime('%Y-%m-%d %X',time.localtime())
+    data = (uid,username,type,logMsg + tmp_msg,mDate)
+    result = sql.table('logs2').add('uid,username,type,log,addtime',data)
+
+def check_ip_white(path,ip):
+    if os.path.exists(path):
+        try:
+            path_json=json.loads(ReadFile(path))
+        except:
+            WriteFile(path,'[]')
+            return False
+        if ip in path_json:return True
+        else:return False
+    else:
+        return False
+
+#登陆告警
+def login_send_body(is_type,username,login_ip,port):
+    if os.path.exists("/www/server/panel/data/login_send_mail.pl"):
+        if check_ip_white('/www/server/panel/data/send_login_white.json',login_ip):return False
+        send_mail("aapanel login reminder","aapanel login reminder：Your server "+get_ip()+" successfully logged in via "+is_type+", account number: "+username+", login IP: "+login_ip+":"+port+", login time: "+time.strftime('%Y -%m-%d %X',time.localtime()), True)
+    if os.path.exists("/www/server/panel/data/login_send_dingding.pl"):
+        if check_ip_white('/www/server/panel/data/send_login_white.json',login_ip):return False
+        send_dingding("aapanel login reminder：Your server "+get_ip()+" successfully logged in via "+is_type+", account number: "+username+", login IP: "+login_ip+":"+port+", login time: "+time.strftime('%Y -%m-%d %X',time.localtime()), True)
+
+#普通模式下调用发送消息【设置登陆告警后的设置】
+#title= 发送的title
+#body= 发送的body
+#is_logs= 是否记录日志
+#is_type=发送告警的类型
+def send_to_body(title,body,is_logs=False,is_type="aaPanel email alert"):
+    if os.path.exists("/www/server/panel/data/login_send_mail.pl"):
+        if is_logs:
+            send_mail(title, body,True,is_type)
+        send_mail(title,body)
+    if os.path.exists("/www/server/panel/data/login_send_dingding.pl"):
+        if is_logs:
+            send_dingding(body,True,is_type)
+        send_dingding(body)
+
+#普通发送消息
+#send_type= ["mail","dingding"]
+#title =发送的头
+#body= 发送消息的内容
+def send_body_words(send_type,title,body):
+    if send_type=='mail':
+        return send_mail(title,body)
+    if send_type=='dingding':
+        return  send_dingding(body)
+
+def return_is_send_info():
+    import send_mail
+    send_mail22 = send_mail.send_mail()
+    tongdao = send_mail22.get_settings()
+    ret={}
+    ret['mail']=tongdao['user_mail']['user_name']
+    ret['dingding']=tongdao['dingding']['dingding']
+    return ret

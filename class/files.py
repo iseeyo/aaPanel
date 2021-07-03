@@ -5,7 +5,7 @@
 # +-------------------------------------------------------------------
 # | Copyright (c) 2015-2016 宝塔软件(http://bt.cn) All rights reserved.
 # +-------------------------------------------------------------------
-# | Author: 黄文良 <287962566@qq.com>
+# | Author: hwliang <hwl@bt.cn>
 # +-------------------------------------------------------------------
 import sys
 import os
@@ -159,12 +159,16 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
             text2 = html.escape(str_convert, quote=True)
         else:
             text2 = cgi.escape(str_convert, quote=True)
+
+        reps = {'&amp;':'&'}
+        for rep in reps.keys():
+            if text2.find(rep) != -1: text2 = text2.replace(rep,reps[rep])
         return text2
 
     # 上传文件
     def UploadFile(self, get):
         from werkzeug.utils import secure_filename
-        from flask import request
+        from BTPanel import request
         if sys.version_info[0] == 2:
             get.path = get.path.encode('utf-8')
         if not os.path.exists(get.path):
@@ -184,6 +188,20 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
                         (filename, get['path']))
         return public.returnMsg(True, 'FILE_UPLOAD_SUCCESS')
 
+    def f_name_check(self,filename):
+        '''
+            @name 文件名检测2
+            @author hwliang<2021-03-16>
+            @param filename<string> 文件名
+            @return bool
+        '''
+        f_strs = [';','&','<','>']
+        for fs in f_strs:
+            if filename.find(fs) != -1:
+                return False
+        return True
+
+
     # 上传文件2
     def upload(self, args):
         if not 'f_name' in args:
@@ -196,8 +214,14 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
             args.f_name = args.f_name.encode('utf-8')
             args.f_path = args.f_path.encode('utf-8')
 
+
+        if not self.f_name_check(args.f_name): return public.returnMsg(False,'FILE_NAME_ERR')
+
+        if args.f_path == '/':
+            return public.returnMsg(False,'UPLOAD_DIR_ERR')
+
         if args.f_name.find('./') != -1 or args.f_path.find('./') != -1:
-            return public.returnMsg(False, 'Wrong parameter')
+            return public.returnMsg(False, 'WRONG_PARAMETER')
         if not os.path.exists(args.f_path):
             os.makedirs(args.f_path, 493)
             if not 'dir_mode' in args or not 'file_mode' in args:
@@ -210,10 +234,15 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
             d_size = os.path.getsize(save_path)
         if d_size != int(args.f_start):
             return d_size
-        upload_files = request.files.getlist("blob")
         f = open(save_path, 'ab')
-        for tmp_f in upload_files:
-            f.write(tmp_f.read())
+        if 'b64_data' in args:
+            import base64
+            b64_data = base64.b64decode(args.b64_data)
+            f.write(b64_data)
+        else:
+            upload_files = request.files.getlist("blob")
+            for tmp_f in upload_files:
+                f.write(tmp_f.read())
         f.close()
         f_size = os.path.getsize(save_path)
         if f_size != int(args.f_size):
@@ -242,7 +271,7 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
 
         public.WriteLog('TYPE_FILE', 'FILE_UPLOAD_SUCCESS',
                         (args.f_name, args.f_path))
-        return public.returnMsg(True, 'Upload Success!')
+        return public.returnMsg(True, 'FILE_UPLOAD_SUCCESS')
 
     # 设置文件和目录权限
     def set_mode(self, path):
@@ -260,6 +289,19 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
             return '1'
         return '0'
 
+    def __check_favorite(self,filepath,favorites_info):
+        for favorite in favorites_info:
+            if filepath == favorite['path']:
+                return '1'
+        return '0'
+
+    def __check_share(self,filename):
+        my_table = 'download_token'
+        result = public.M(my_table).where('filename=?',(filename,)).getField('id')
+        if result:
+            return str(result)
+        return '0'
+
     # 取文件/目录列表
     def GetDir(self, get):
         if not hasattr(get, 'path'):
@@ -270,14 +312,15 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
         if get.path == '':
             get.path = '/www'
         if not os.path.exists(get.path):
-            return public.ReturnMsg(False,'DIR_NOT_EXISTS')
+            get.path = '/www/wwwroot'
+            #return public.ReturnMsg(False, '指定目录不存在!')
         if get.path == '/www/Recycle_bin':
-            return public.returnMsg(False,'This is the recycle bin directory, please press the [Recycle Bin] button in the upper right corner to open')
+            return public.returnMsg(False,'RECYCLE_BIN_ERR')
         if not os.path.isdir(get.path):
             get.path = os.path.dirname(get.path)
 
         if not os.path.isdir(get.path):
-            return public.returnMsg(False,'This is not a directory!')
+            return public.returnMsg(False,'DIR_ERR')
 
         import pwd
         dirnames = []
@@ -296,6 +339,10 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
         info = {}
         info['count'] = self.GetFilesCount(get.path, search)
         info['row'] = 100
+        if 'disk' in get:
+            if get.disk == 'true': info['row'] = 2000
+        if 'share' in get and get.share:
+            info['row'] = 5000
         info['p'] = 1
         if hasattr(get, 'p'):
             try:
@@ -317,6 +364,9 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
         i = 0
         n = 0
 
+        data['STORE'] = self.get_files_store(None)
+        data['FILE_RECYCLE'] = os.path.exists('data/recycle_bin.pl')
+
         if not hasattr(get, 'reverse'):
             for filename in os.listdir(get.path):
                 filename = self.xssencode(filename)
@@ -333,6 +383,8 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
                 try:
                     if sys.version_info[0] == 2:
                         filename = filename.encode('utf-8')
+                    else:
+                        filename.encode('utf-8')
                     filePath = get.path+'/'+filename
                     link = ''
                     if os.path.islink(filePath):
@@ -351,11 +403,16 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
                     except:
                         user = str(stat.st_uid)
                     size = str(stat.st_size)
+                    # 判断文件是否已经被收藏
+                    favorite = self.__check_favorite(filePath,data['STORE'])
                     if os.path.isdir(filePath):
-                        dirnames.append(filename+';'+size+';' +
-                                        mtime+';'+accept+';'+user+';'+link + ';' +self.get_download_id(filePath)+';'+ self.is_composer_json(filePath))
+                        dirnames.append(filename+';'+size+';' + mtime+';'+accept+';'+user+';'+link + ';' +
+                                        self.get_download_id(filePath)+';'+ self.is_composer_json(filePath)+';'
+                                        +favorite+';'+self.__check_share(filePath))
                     else:
-                        filenames.append(filename+';'+size+';'+mtime+';'+accept+';'+user+';'+link+';'+self.get_download_id(filePath))
+                        filenames.append(filename+';'+size+';'+mtime+';'+accept+';'+user+';'+link+';'
+                                         +self.get_download_id(filePath)+';' + self.is_composer_json(filePath)+';'
+                                         +favorite+';'+self.__check_share(filePath))
                     n += 1
                 except:
                     continue
@@ -367,19 +424,23 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
             if get.reverse == 'False':
                 reverse = False
             for file_info in self.__list_dir(get.path, get.sort, reverse):
-                filename = os.path.join(get.path, file_info['name'])
-                if not os.path.exists(filename):
-                    continue
+                filename = os.path.join(get.path, file_info[0])
                 if search:
-                    if file_info['name'].lower().find(search) == -1:
+                    if file_info[0].lower().find(search) == -1:
                         continue
                 i += 1
                 if n >= page.ROW:
                     break
                 if i < page.SHIFT:
                     continue
+                if not os.path.exists(filename): continue
+                file_info = self.__format_stat(filename, get.path)
+                if not file_info: continue
+                favorite = self.__check_favorite(filename, data['STORE'])
                 r_file = file_info['name'] + ';' + str(file_info['size']) + ';' + str(file_info['mtime']) + ';' + str(
-                    file_info['accept']) + ';' + file_info['user'] + ';' + file_info['link']+';' + self.get_download_id(filename) + ';' + self.is_composer_json(filename)
+                    file_info['accept']) + ';' + file_info['user'] + ';' + file_info['link']+';'\
+                         + self.get_download_id(filename) + ';' + self.is_composer_json(filename)+';'\
+                         + favorite+';'+self.__check_share(filename)
                 if os.path.isdir(filename):
                     dirnames.append(r_file)
                 else:
@@ -388,43 +449,114 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
 
             data['DIR'] = dirnames
             data['FILES'] = filenames
-
         data['PATH'] = str(get.path)
-        data['STORE'] = self.get_files_store(None)
+        for i in range(len(data['DIR'])):
+            data['DIR'][i] += ';' + self.get_file_ps( os.path.join(data['PATH'] , data['DIR'][i].split(';')[0]))
+
+        for i in range(len(data['FILES'])):
+            data['FILES'][i] += ';' + self.get_file_ps( os.path.join(data['PATH'] , data['FILES'][i].split(';')[0]))
+
         if hasattr(get, 'disk'):
             import system
             data['DISK'] = system.system().GetDiskInfo()
         return data
 
+
+    def get_file_ps(self,filename):
+        '''
+            @name 获取文件或目录备注
+            @author hwliang<2020-10-22>
+            @param filename<string> 文件或目录全路径
+            @return string
+        '''
+        ps_path = '/www/server/panel/data/files_ps'
+        f_key1 = '/'.join((ps_path,public.md5(filename)))
+        if os.path.exists(f_key1):
+            return public.readFile(f_key1)
+
+        f_key2 = '/'.join((ps_path,public.md5(os.path.basename(filename))))
+        if os.path.exists(f_key2):
+            return public.readFile(f_key2)
+        return ''
+
+
+    def set_file_ps(self,args):
+        '''
+            @name 设置文件或目录备注
+            @author hwliang<2020-10-22>
+            @param filename<string> 文件或目录全路径
+            @param ps_type<int> 备注类型 0.完整路径 1.文件名称
+            @param ps_body<string> 备注内容
+            @return dict
+        '''
+        filename = args.filename.strip()
+        ps_type = int(args.ps_type)
+        ps_body = args.ps_body
+        ps_path = '/www/server/panel/data/files_ps'
+        if not os.path.exists(ps_path):
+            os.makedirs(ps_path,384)
+        if ps_type == 1:
+            f_name = os.path.basename(filename)
+        else:
+            f_name = filename
+        ps_key = public.md5(f_name)
+
+        f_key = '/'.join((ps_path,ps_key))
+        if ps_body:
+            public.writeFile(f_key,ps_body)
+            public.WriteLog('TYPE_FILE','SET_FILE_NOTES',(f_name,ps_body))
+        else:
+            if os.path.exists(f_key):os.remove(f_key)
+            public.WriteLog('TYPE_FILE','CLEAR_FILE_NOTES',(f_name))
+        return public.returnMsg(True,'SET_SUCCESS')
+
+
+
+
     def __list_dir(self, path, my_sort='name', reverse=False):
+        '''
+            @name 获取文件列表，并排序
+            @author hwliang<2020-08-01>
+            @param path<string> 路径
+            @param my_sort<string> 排序字段
+            @param reverse<bool> 是否降序
+            @param list
+        '''
         if not os.path.exists(path):
             return []
         py_v = sys.version_info[0]
         tmp_files = []
-        tmp_dirs = []
+
         for f_name in os.listdir(path):
             try:
                 if py_v == 2:
                     f_name = f_name.encode('utf-8')
-                filename = os.path.join(path, f_name)
-                if not os.path.exists(filename):
-                    continue
-                file_info = self.__format_stat(filename, path)
-                if not file_info:
-                    continue
-                if os.path.isdir(filename):
-                    tmp_dirs.append(file_info)
                 else:
-                    tmp_files.append(file_info)
+                    f_name.encode('utf-8')
+
+                #使用.join拼接效率更高
+                filename = "/".join((path,f_name))
+                sort_key = 1
+                sort_val = None
+
+                #此处直接做异常处理比先判断文件是否存在更高效
+                if my_sort == 'name':
+                    sort_key = 0
+                elif my_sort == 'size':
+                    sort_val = os.stat(filename).st_size
+                elif my_sort == 'mtime':
+                    sort_val =  os.stat(filename).st_mtime
+                elif my_sort == 'accept':
+                    sort_val = os.stat(filename).st_mode
+                elif my_sort == 'user':
+                    sort_val =  os.stat(filename).st_uid
             except:
                 continue
-        tmp_dirs = sorted(tmp_dirs, key=lambda x: x[my_sort], reverse=reverse)
-        tmp_files = sorted(
-            tmp_files, key=lambda x: x[my_sort], reverse=reverse)
+            #使用list[tuple]排序效率更高
+            tmp_files.append((f_name,sort_val))
 
-        for f in tmp_files:
-            tmp_dirs.append(f)
-        return tmp_dirs
+        tmp_files = sorted(tmp_files, key=lambda x: x[sort_key], reverse=reverse)
+        return tmp_files
 
     def __format_stat(self, filename, path):
         try:
@@ -499,8 +631,10 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
             link = ' -> ' + os.readlink(filename)
         tmp_path = (path + '/').replace('//', '/')
         if path and tmp_path != '/':
-            filename = filename.replace(tmp_path, '')
-        return filename + ';' + size + ';' + mtime + ';' + accept + ';' + user + ';' + link+';'+ down_url
+            filename = filename.replace(tmp_path, '',1)
+        favorite = self.__check_favorite(filename, self.get_files_store(None))
+        return filename + ';' + size + ';' + mtime + ';' + accept + ';' + user + ';' + link+';'+ down_url+';'+ \
+               self.is_composer_json(filename)+';'+favorite+';'+self.__check_share(filename)
 
     #获取指定目录下的所有视频或音频文件
     def get_videos(self,args):
@@ -542,6 +676,8 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
         if sys.version_info[0] == 2:
             get.path = get.path.encode('utf-8').strip()
         try:
+            if get.path[-1] == '.':
+                return public.returnMsg(False, 'File_END_WITH')
             if not self.CheckFileName(get.path):
                 return public.returnMsg(False, 'FILE_NAME_SPECIAL_CHARACTRES')
             if os.path.exists(get.path):
@@ -556,11 +692,36 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
         except:
             return public.returnMsg(False, 'FILE_CREATE_ERR')
 
+    #创建软链
+    def CreateLink(self,get):
+        '''
+            @name 创建软链接
+            @author hwliang<2021-03-23>
+            @param get<dict_obj{
+                sfile<string> 源文件
+                dfile<string> 软链文件名
+            }>
+            @return dict
+        '''
+
+        if not 'sfile' in get: return public.returnMsg(False,'INIT_ARGS_ERR')
+        if not os.path.exists(get.sfile): return public.returnMsg(False,'FILE_NOT_EXISTS')
+        if os.path.exists(get.dfile): return public.returnMsg(False,'SOFTCHAIN_FILE_EXIST')
+        if get.dfile[0] != '/': return public.returnMsg(False,'SOFTCHAIN_FILE_PATH')
+        public.ExecShell("ln -sf {} {}".format(get.sfile,get.dfile))
+        if not os.path.exists(get.dfile): return public.returnMsg(False,'SOFTLINK_CREATE_ERR')
+        public.WriteLog('TYPE_FIREWALL','CREATE_SOFTLINK',(get.dfile,get.sfile))
+        return public.returnMsg(True,'SOFTLINK_CREATE_SUCCESS')
+
+
+
     # 创建目录
     def CreateDir(self, get):
         if sys.version_info[0] == 2:
             get.path = get.path.encode('utf-8').strip()
         try:
+            if get.path[-1] == '.':
+                return public.returnMsg(False, 'DIR_END_WITH1')
             if not self.CheckFileName(get.path):
                 return public.returnMsg(False, 'DIR_NAME_SPECIAL_CHARACTRES')
             if os.path.exists(get.path):
@@ -577,7 +738,7 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
         if sys.version_info[0] == 2:
             get.path = get.path.encode('utf-8')
         if get.path == '/www/Recycle_bin':
-            return public.returnMsg(False,'You cannot directly operate the recycle bin directory, please press the [Recycle Bin] button in the upper right corner to open')
+            return public.returnMsg(False,'RECYCLE_BIN_ERR')
         if not os.path.exists(get.path):
             return public.returnMsg(False, 'DIR_NOT_EXISTS')
 
@@ -594,7 +755,7 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
                 if not self.delete_empty(get.path):
                     return public.returnMsg(False, 'DIR_ERR_NOT_EMPTY')
 
-            if os.path.exists('data/recycle_bin.pl'):
+            if os.path.exists('data/recycle_bin.pl') and session.get('debug') != 1:
                 if self.Mv_Recycle_bin(get):
                     self.site_path_safe(get)
                     return public.returnMsg(True, 'DIR_MOVE_RECYCLE_BIN')
@@ -626,7 +787,7 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
         if get.path.find('.user.ini') != -1:
             public.ExecShell("chattr -i '"+get.path+"'")
         try:
-            if os.path.exists('data/recycle_bin.pl'):
+            if os.path.exists('data/recycle_bin.pl') and session.get('debug') != 1:
                 if self.Mv_Recycle_bin(get):
                     self.site_path_safe(get)
                     return public.returnMsg(True, 'FILE_MOVE_RECYCLE_BIN')
@@ -688,6 +849,10 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
             try:
                 tmp = {}
                 fname = rPath + file
+                if sys.version_info[0] == 2:
+                    fname = fname.encode('utf-8')
+                else:
+                    fname.encode('utf-8')
                 tmp1 = file.split('_bt_')
                 tmp2 = tmp1[len(tmp1)-1].split('_t_')
                 tmp['rname'] = file
@@ -708,6 +873,9 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
                     data['files'].append(tmp)
             except:
                 continue
+
+        data['dirs'] = sorted(data['dirs'],key = lambda x: x['time'],reverse=True)
+        data['files'] = sorted(data['files'],key = lambda x: x['time'],reverse=True)
         return data
 
     # 彻底删除
@@ -791,6 +959,8 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
         if sys.version_info[0] == 2:
             get.sfile = get.sfile.encode('utf-8')
             get.dfile = get.dfile.encode('utf-8')
+        if get.dfile[-1] == '.':
+            return public.returnMsg(False, 'File_END_WITH')
         if not os.path.exists(get.sfile):
             return public.returnMsg(False, 'FILE_NOT_EXISTS')
 
@@ -817,6 +987,8 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
         if sys.version_info[0] == 2:
             get.sfile = get.sfile.encode('utf-8')
             get.dfile = get.dfile.encode('utf-8')
+        if get.dfile[-1] == '.':
+            return public.returnMsg(False, 'DIR_END_WITH1')
         if not os.path.exists(get.sfile):
             return public.returnMsg(False, 'DIR_NOT_EXISTS')
 
@@ -838,23 +1010,27 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
             return public.returnMsg(False, 'DIR_COPY_ERR')
 
     # 移动文件或目录
-
     def MvFile(self, get):
         if sys.version_info[0] == 2:
             get.sfile = get.sfile.encode('utf-8')
             get.dfile = get.dfile.encode('utf-8')
+        if get.dfile[-1] == '.':
+            return public.returnMsg(False, 'File_END_WITH')
         if not self.CheckFileName(get.dfile):
             return public.returnMsg(False,'FILE_NAME_SPECIAL_CHARACTRES')
         if get.sfile == '/www/Recycle_bin':
-            return public.returnMsg(False,'You cannot directly operate the recycle bin directory, please press the [Recycle Bin] button in the upper right corner to open')
+            return public.returnMsg(False,'RECYCLE_BIN_ERR')
         if not os.path.exists(get.sfile):
             return public.returnMsg(False, 'FILE_NOT_EXISTS')
+
+        if os.path.exists(get.dfile):
+            return public.returnMsg(False,'FILE_EXIST_ERR')
 
         if get.dfile[-1] == '/':
             get.dfile = get.dfile[:-1]
 
         if get.dfile == get.sfile:
-            return public.returnMsg(False,'Meaningless operation')
+            return public.returnMsg(False,'MEANINGLESS_OPERA')
         
         if not self.CheckDir(get.sfile):
             return public.returnMsg(False,'FILE_DANGER')
@@ -911,11 +1087,20 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
                 return public.returnMsg(False,'FILE_NOT_EXISTS',(get.path,))
             public.writeFile(get.path,'')
         if self.__get_ext(get.path) in ['gz','zip','rar','exe','db','pdf','doc','xls','docx','xlsx','ppt','pptx','7z','bz2','png','gif','jpg','jpeg','bmp','icon','ico','pyc','class','so','pyd']:
-            return public.returnMsg(False,'The file format does not support online editing!')
+            return public.returnMsg(False,'FILE_ONLINE_EDIT_ERR')
         if os.path.getsize(get.path) > 3145928:
             return public.returnMsg(False,'CANT_EDIT_ONLINE_FILE')
-        if not os.path.isfile(get.path):
-            return public.returnMsg(False,'This is not a file!')
+        if os.path.isdir(get.path):
+            return public.returnMsg(False,'FILE_ERR')
+
+        # 处理my.cnf为空的情况
+        myconf_file = '/etc/my.cnf'
+        if get.path == myconf_file:
+            if os.path.getsize(myconf_file) < 10:
+                mycnf_file_bak = '/etc/my.cnf.bak'
+                if os.path.exists(mycnf_file_bak):
+                    public.writeFile(myconf_file, public.readFile(mycnf_file_bak))
+
         fp = open(get.path,'rb')
         data = {}
         data['status'] = True
@@ -936,9 +1121,9 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
                             data['encoding'] = 'BIG5'
                             data['data'] = srcBody.decode(data['encoding'])
                         except:
-                            return public.returnMsg(False, 'File encoding is not compatible and cannot be read correctly!')
+                            return public.returnMsg(False, 'FILE_ERR1')
             else:
-               return public.returnMsg(False,'Failed to open file, file may be occupied by other processes!')
+               return public.returnMsg(False,'FILE_ERR2')
             if hasattr(get,'filename'):
                 get.path = get.filename
             data['historys'] = self.get_history(get.path)
@@ -950,7 +1135,7 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
     #保存文件
     def SaveFileBody(self,get):
         if not 'path' in get:
-            return public.returnMsg(False,'path parameter cannot be empty!')
+            return public.returnMsg(False,'PATH_PARA_ERR')
         if sys.version_info[0] == 2:
             get.path = get.path.encode('utf-8')
         if not os.path.exists(get.path):
@@ -959,7 +1144,7 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
 
         his_path = '/www/backup/file_history/'
         if get.path.find(his_path) != -1:
-            return public.returnMsg(False,'Cannot modify history copy directly!')
+            return public.returnMsg(False,'HISTORY_DIR_ERR')
         try:
             if 'base64' in get:
                 import base64
@@ -975,7 +1160,7 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
                     public.ExecShell('\\cp -a '+get.path+' /tmp/backup.conf')
 
             data = get.data
-            if data == 'undefined': return public.returnMsg(False,'Wrong file content, please save again!')
+            if data == 'undefined': return public.returnMsg(False,'FILE_ERR3')
             userini = False
             if get.path.find('.user.ini') != -1:
                 userini = True
@@ -1083,7 +1268,7 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
                      args.filename).replace('//', '/')
         args.path = save_path + '/' + args.history
         if not os.path.exists(args.path):
-            return public.returnMsg(False,'The specified historical copy does not exist!')
+            return public.returnMsg(False,'HISTORY_ERR')
         import shutil
         shutil.copyfile(args.path, args.filename)
         return self.GetFileBody(args)
@@ -1098,9 +1283,9 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
             f_md5 = public.FileMd5(filename)
             s_md5 = public.md5(args.body)
             if f_md5 == s_md5:
-                return public.returnMsg(True,'Not Edit!')
+                return public.returnMsg(True,'NOT_EDIT')
         public.writeFile(filename,args.body)
-        return public.returnMsg(True,'Automatically saved successfully!')
+        return public.returnMsg(True,'AUTO_SAVE')
 
     # 取上一次自动保存的结果
     def get_auto_save_body(self, args):
@@ -1239,7 +1424,7 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
             public.WriteLog('TYPE_FILE', 'FILE_ALL_ACCESS')
             return public.returnMsg(True, 'FILE_ALL_ACCESS')
         else:
-            isRecyle = os.path.exists('data/recycle_bin.pl')
+            isRecyle = os.path.exists('data/recycle_bin.pl') and session.get('debug') != 1
             path = get.path
             get.data = json.loads(get.data)
             l = len(get.data)
@@ -1287,10 +1472,10 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
         if not self.CheckDir(get.path):
             return public.returnMsg(False,'FILE_DANGER')
         if not 'selected' in session:
-            return public.returnMsg(False,'The operation failed, please re-copy the copy or cut process')
+            return public.returnMsg(False,'TCOPY_PRESS_ERR')
         i = 0
         if not 'selected' in session:
-            return public.returnMsg(False,'The operation failed, please re-operate')
+            return public.returnMsg(False,'OPERA_FAILED')
         myfiles = json.loads(session['selected']['data'])
         l = len(myfiles)
         if get.type == '1':
@@ -1350,17 +1535,12 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
             shutil.move(sfile, dfile)
         else:
             self.copytree(sfile, dfile)
-            if os.path.exists(sfile):
+            if os.path.exists(sfile) and os.path.exists(dfile):
                 if is_dir:
                     shutil.rmtree(sfile)
                 else:
                     os.remove(sfile)
         return True
-
-
-    #创建软链
-    def create_link(self,args):
-        pass
 
     # 复制目录
     def copytree(self, sfile, dfile):
@@ -1369,6 +1549,8 @@ session.save_handler = files'''.format(path, sess_path, sess_path)
         if not os.path.exists(dfile):
             os.makedirs(dfile)
         for f_name in os.listdir(sfile):
+            if not f_name.strip(): continue
+            if f_name.find('./') != -1: continue
             src_filename = (sfile + '/' + f_name).replace('//', '/')
             dst_filename = (dfile + '/' + f_name).replace('//', '/')
             mode_info = public.get_mode_and_user(src_filename)
@@ -1492,7 +1674,7 @@ done
                 default_ext.append("gmp")
                 default_ext.append("opcache")
             if get.name.lower() in default_ext:
-                return public.returnMsg(False, "This extension is the default extension of OLS and cannot be uninstalled")
+                return public.returnMsg(False, "PHP_EXTENSION_UNINSTALL_ERR")
         execstr = "cd " + public.GetConfigValue('setup_path') + "/panel/install && /bin/bash install_soft.sh " + \
             get.type+" uninstall " + get.name.lower() + " " + get.version.replace('.', '')
         if public.get_webserver() == "openlitespeed":
@@ -1510,7 +1692,7 @@ done
         import db
         find = db.Sql().table('tasks').where('status=? OR status=?',('-1','0')).field('id,type,name,execstr').find()
         if(type(find) == str):
-            return public.returnMsg(False,"Query error, "+find)
+            return public.returnMsg(False,"QUERY_ERR",(find,))
         if not len(find):
             return public.returnMsg(False,'NO_TASK_AT_LINEUP',("-2",))
         isTask = '/tmp/panelTask.pl'
@@ -1709,13 +1891,13 @@ cd %s
     def add_files_store(self, get):
         path = get.path
         if not os.path.exists(path):
-            return public.returnMsg(False,'File or directory does not exist!')
+            return public.returnMsg(False,'FILE_DIR_NOT_EXIST')
         data = self.get_store_data()
         if path in data:
-            return public.returnMsg(False,'Do not add it repeatedly!')
+            return public.returnMsg(False,'ADD_REPEATEDLY')
         data.append(path)
         self.set_store_data(data)
-        return public.returnMsg(True,'Added successfully!')
+        return public.returnMsg(True,'ADD_SUCCESS')
 
     #删除收藏夹
     def del_files_store(self,get):
@@ -1730,34 +1912,34 @@ cd %s
                         is_go = True
                         break
             if not is_go:
-                return public.returnMsg(False,'This favorite object could not be found!')
+                return public.returnMsg(False,'FAVORITE_NOT_FOUND')
         data.remove(path)
         if len(data) <= 0:
             data = []
         self.set_store_data(data)
-        return public.returnMsg(True,'Successfully deleted!')
+        return public.returnMsg(True,'DEL_SUCCESS')
 
-    #单文件木马扫描
-    def file_webshell_check(self,get):
-        if not 'filename' in get: return public.returnMsg(True, 'file does not exist!')
-        import webshell_check
-        if webshell_check.webshell_check().upload_file_url(get.filename.strip()):
-            return public.returnMsg(False,'This file is webshell [ %s ]'%get.filename.strip().split('/')[-1])
-        else:
-            return public.returnMsg(True, 'no risk')
-
-    #目录扫描木马
-    def dir_webshell_check(self,get):
-        if not 'path' in get: return public.returnMsg(False, 'Please enter a valid directory!')
-        path=get.path.strip()
-        if os.path.exists(path):
-            #启动消息队列
-            exec_shell = public.get_python_bin() + ' /www/server/panel/class/webshell_check.py dir %s mail'%path
-            task_name = "Scan Trojan files for directory %s"%path
-            import panelTask
-            task_obj = panelTask.bt_task()
-            task_obj.create_task(task_name, 0, exec_shell)
-            return public.returnMsg(True, 'Starting Trojan killing process. Details will be in the panel security log')
+    # #单文件木马扫描
+    # def file_webshell_check(self,get):
+    #     if not 'filename' in get: return public.returnMsg(True, 'file does not exist!')
+    #     import webshell_check
+    #     if webshell_check.webshell_check().upload_file_url(get.filename.strip()):
+    #         return public.returnMsg(False,'This file is webshell [ %s ]'%get.filename.strip().split('/')[-1])
+    #     else:
+    #         return public.returnMsg(True, 'no risk')
+    #
+    # #目录扫描木马
+    # def dir_webshell_check(self,get):
+    #     if not 'path' in get: return public.returnMsg(False, 'Please enter a valid directory!')
+    #     path=get.path.strip()
+    #     if os.path.exists(path):
+    #         #启动消息队列
+    #         exec_shell = public.get_python_bin() + ' /www/server/panel/class/webshell_check.py dir %s mail'%path
+    #         task_name = "Scan Trojan files for directory %s"%path
+    #         import panelTask
+    #         task_obj = panelTask.bt_task()
+    #         task_obj.create_task(task_name, 0, exec_shell)
+    #         return public.returnMsg(True, 'Starting Trojan killing process. Details will be in the panel security log')
 
     # 获取下载地址列表
     def get_download_url_list(self, get):
@@ -1803,39 +1985,45 @@ cd %s
 
     # 获取指定下载地址
     def get_download_url_find(self, get):
-        if not 'id' in get: return public.returnMsg(False, 'Wrong parameter!')
+        if not 'id' in get: return public.returnMsg(False, 'WRONG_PARAMETER')
         id = int(get.id)
         my_table = 'download_token'
         data = public.M(my_table).where('id=?', (id,)).find()
-        if not data: return public.returnMsg(False, 'The specified address does not exist!')
+        if not data: return public.returnMsg(False, 'ADDRESS_NOT_EXIST')
         return data
 
     # 删除下载地址
     def remove_download_url(self, get):
-        if not 'id' in get: return public.returnMsg(False, 'Wrong parameter!')
+        if not 'id' in get: return public.returnMsg(False, 'WRONG_PARAMETER')
         id = int(get.id)
         my_table = 'download_token'
         public.M(my_table).where('id=?', (id,)).delete()
-        return public.returnMsg(True, 'Successfully deleted!')
+        return public.returnMsg(True, 'DEL_SUCCESS')
 
     # 修改下载地址
     def modify_download_url(self, get):
-        if not 'id' in get: return public.returnMsg(False, 'Wrong parameter!')
+        if not 'id' in get: return public.returnMsg(False, 'WRONG_PARAMETER')
         id = int(get.id)
         my_table = 'download_token'
         if not public.M(my_table).where('id=?', (id,)).count():
-            return public.returnMsg(False, 'The specified address does not exist!')
+            return public.returnMsg(False, 'ADDRESS_NOT_EXIST')
         pdata = {}
         if 'expire' in get: pdata['expire'] = get.expire
-        if 'password' in get: pdata['password'] = get.password
+        if 'password' in get:
+            pdata['password'] = get.password
+            if len(pdata['password']) < 4 and len(pdata['password']) > 0:
+                return public.returnMsg(False,'The length of the extracted password cannot be less than 4 digits')
+            if not re.match('^\w+$',pdata['password']):
+                return public.returnMsg(False,'No special symbols can be used in the extracted password')
+
         if 'ps' in get: pdata['ps'] = get.ps
         public.M(my_table).where('id=?', (id,)).update(pdata)
-        return public.returnMsg(True, 'Successfully modified!')
+        return public.returnMsg(True, 'EDIT_SUCCESS')
 
     # 生成下载地址
     def create_download_url(self, get):
         if not os.path.exists(get.filename):
-            return public.returnMsg(False,'The specified file does not exist!')
+            return public.returnMsg(False,'FILE_DIR_NOT_EXIST')
         my_table = 'download_token'
         mtime = int(time.time())
         pdata = {
@@ -1847,10 +2035,14 @@ cd %s
             "password":str(get.password), #提取密码
             "addtime": mtime #添加时间
         }
-        # 更新 or 插入
-        token = public.M(my_table).where('filename=?', (get.filename,)).getField('token')
+        if len(pdata['password']) < 4 and len(pdata['password']) > 0:
+            return public.returnMsg(False,'PASSWD_ERR')
+        if not re.match('^\w+$',pdata['password']):
+            return public.returnMsg(False,'No special symbols can be used in the extracted password')
+        #更新 or 插入
+        token = public.M(my_table).where('filename=?',(get.filename,)).getField('token')
         if token:
-            return public.returnMsg(False, 'Already shared!')
+            return public.returnMsg(False, 'ALREADY_SHARED')
             # pdata['token'] = token
             # del(pdata['total'])
             # public.M(my_table).where('token=?',(token,)).update(pdata)
@@ -1863,10 +2055,10 @@ cd %s
 
     #取PHP-CLI执行命令
     def __get_php_bin(self,php_version=None):
-        php_vs = ["80","74","73","72","71","70","56","55","54","53","52"]
+        php_vs = ["80","74","73","72","71","70","56","55","54","53"]
         if php_version:
             if php_version != 'auto':
-                if not php_version in php_vs: return False
+                if not php_version in php_vs: return ''
             else:
                 php_version = None
 
@@ -1881,9 +2073,9 @@ cd %s
                 php_v = pv
                 break
         # 如果没安装直接返回False
-        if not php_v: return False
-        # 处理PHP-CLI-INI配置文件
-        php_ini = '/tmp/composer_php_cli_' + php_v + '.ini'
+        if not php_v: return ''
+        #处理PHP-CLI-INI配置文件
+        php_ini = '/www/server/panel/tmp/composer_php_cli_'+php_v+'.ini'
         if not os.path.exists(php_ini):
             # 如果不存在，则从PHP安装目录下复制一份
             src_php_ini = php_path + php_v + '/etc/php.ini'
@@ -1901,13 +2093,17 @@ cd %s
             public.ExecShell("nohup {} &> /tmp/panelExec.pl &".format(get.giturl))
         else:
             public.ExecShell("nohup git clone {} &> /tmp/panelExec.pl &".format(get.giturl))
-        return public.returnMsg(True,'Command has been sent!')
+        return public.returnMsg(True,'COMMAND_SENT')
 
     # 安装composer
     def get_composer_bin(self):
         composer_bin = '/usr/bin/composer'
+        download_addr = 'wget -O {} {}/install/src/composer.phper -T 5'.format(composer_bin,public.get_url())
         if not os.path.exists(composer_bin):
-            public.ExecShell('wget -O {} {}/install/src/composer.phper -T 5'.format(composer_bin,public.get_url()))
+            public.ExecShell(download_addr)
+        elif os.path.getsize(composer_bin) < 100:
+            public.ExecShell(download_addr)
+
         public.ExecShell('chmod +x {}'.format(composer_bin))
         if not os.path.exists(composer_bin):
             return False
@@ -1918,7 +2114,7 @@ cd %s
         #准备执行环境
         composer_bin = self.get_composer_bin()
         if not composer_bin:
-            return public.returnMsg(False,'No composer available!')
+            return public.returnMsg(False,'NO_COMPOSER_AVAILABLE')
 
         #取执行PHP版本
         php_version = None
@@ -1926,61 +2122,182 @@ cd %s
             php_version = get.php_version
         php_bin = self.__get_php_bin(php_version)
         if not php_bin:
-            return public.returnMsg(False,'No available PHP version was found, or the specified PHP version was not installed!')
+            return public.returnMsg(False,'PHP_VER_NOT_FOUND')
         if not os.path.exists(get.path + '/composer.json'):
-            return public.returnMsg(False,'The composer.json configuration file was not found in the specified directory!')
+            return public.returnMsg(False,'COMPOSER_CONF_NOT_FOUND')
+        log_file = '/tmp/composer.log'
+        user = ''
+        if 'user' in get:
+            user = 'sudo -u {} '.format(get.user)
+            if not os.path.exists('/usr/bin/sudo'):
+                if os.path.exists('/usr/bin/apt'):
+                    public.ExecShell("apt install sudo -y > {}".format(log_file))
+                else:
+                    public.ExecShell("yum install sudo -y > {}".format(log_file))
+            public.ExecShell("mkdir -p /home/www && chown -R www:www /home/www")
+
         #设置指定源
         if 'repo' in get:
             if get.repo != 'repos.packagist':
-                public.ExecShell('{} {} config -g repo.packagist composer {}'.format(php_bin,composer_bin,get.repo))
+                public.ExecShell('export COMPOSER_HOME=/tmp && {}{} {} config -g repo.packagist composer {}'.format(user,php_bin,composer_bin,get.repo))
             else:
-                public.ExecShell('{} {} config -g --unset repos.packagist'.format(php_bin,composer_bin))
+                public.ExecShell('export COMPOSER_HOME=/tmp && {}{} {} config -g --unset repos.packagist'.format(user,php_bin,composer_bin))
         #执行composer命令
         composer_exec_str = '{} {} {} -vvv'.format(php_bin,composer_bin,get.composer_args)
-        public.ExecShell("cd {} && nohup {} &> /tmp/panelExec.pl &".format(get.path,composer_exec_str))
-        public.WriteLog('Composer',composer_exec_str)
-        return public.returnMsg(True,'Command has been sent!')
+        if os.path.exists(log_file): os.remove(log_file)
+        public.ExecShell("cd {} && export COMPOSER_HOME=/tmp && {} nohup {} &> {} && echo 'BT-Exec-Completed' >> {}  && rm -rf /home/www &".format(get.path,user,composer_exec_str,log_file,log_file))
+        public.WriteLog('Composer',"EXEC_COMPOSER",(get.path,get.composer_args))
+        return public.returnMsg(True,'COMMAND_SENT')
 
     # 取composer版本
     def get_composer_version(self,get):
         composer_bin = self.get_composer_bin()
         if not composer_bin:
-            return public.returnMsg(False,'No composer available!')
+            return public.returnMsg(False,'NO_COMPOSER_AVAILABLE')
 
         try:
             bs = str(public.readFile(composer_bin,'rb'))
             result = re.findall(r"const VERSION\s*=\s*.{0,2}'([\d\.]+)",bs)[0]
+            if not result: raise Exception('empty!')
         except:
             php_bin = self.__get_php_bin()
-            composer_exec_str = php_bin + ' ' + composer_bin +' --version 2>/dev/null|grep \'Composer version\'|awk \'{print $3}\''
+            if not php_bin:  return public.returnMsg(False,'No available PHP version found!')
+            composer_exec_str = 'export COMPOSER_HOME=/tmp && ' + php_bin + ' ' + composer_bin +' --version 2>/dev/null|grep \'Composer version\'|awk \'{print $3}\''
             result = public.ExecShell(composer_exec_str)[0].strip()
         data = public.returnMsg(True,result)
-        import panelSite
-        data['php_versions'] = panelSite.panelSite().GetPHPVersion(get)
+        if 'path' in get:
+            import panelSite
+            data['php_versions'] = panelSite.panelSite().GetPHPVersion(get)
+            data['comp_json'] = True
+            data['comp_lock'] = False
+            if not os.path.exists(get.path + '/composer.json'):
+                data['comp_json'] = public.getMsg('COMPOSER_CONF_NOT_EXIST')
+            if os.path.exists(get.path + '/composer.lock'):
+                data['comp_lock'] = public.getMsg('COMPOSERLOGCK_EXIST')
         return data
 
     # 升级composer版本
     def update_composer(self,get):
         composer_bin = self.get_composer_bin()
         if not composer_bin:
-            return public.returnMsg(False,'No composer available!')
+            return public.returnMsg(False,'NO_COMPOSER_AVAILABLE')
         php_bin = self.__get_php_bin()
-
+        if not php_bin:  return public.returnMsg(False,'No available PHP version found!')
         #设置指定源
-        if 'repo' in get:
-            if get.repo:
-                public.ExecShell('{} {} config -g repo.packagist composer {}'.format(php_bin,composer_bin,get.repo))
+        # if 'repo' in get:
+        #     if get.repo:
+        #         public.ExecShell('{} {} config -g repo.packagist composer {}'.format(php_bin,composer_bin,get.repo))
 
         version1 = self.get_composer_version(get)['msg']
-        composer_exec_str = '{} {} self-update -vvv'.format(php_bin,composer_bin)
-        public.ExecShell(composer_exec_str)[0]
+        composer_exec_str = 'export COMPOSER_HOME=/tmp && {} {} self-update -vvv'.format(php_bin,composer_bin)
+        public.ExecShell(composer_exec_str)
         version2 = self.get_composer_version(get)['msg']
         if version1 == version2:
-            msg = "Currently the latest version, no upgrade required!"
+            msg = public.getMsg("COMPOSER_UPDATE_ERR")
         else:
-            msg = "Upgrade composer from {} to {}".format(version1,version2)
+            msg = public.getMsg("COMPOSER_UPDATE",(version1,version2))
             public.WriteLog('Composer',msg)
         return public.returnMsg(True,msg)
+
+    # 计算文件HASH
+    def get_file_hash(self,args=None,filename=None):
+        if not filename: filename = args.filename
+        import hashlib
+        md5_obj = hashlib.md5()
+        sha1_obj = hashlib.sha1()
+        f = open(filename,'rb')
+        while True:
+            b = f.read(8096)
+            if not b :
+                break
+            md5_obj.update(b)
+            sha1_obj.update(b)
+        f.close()
+        return {'md5':md5_obj.hexdigest(),'sha1':sha1_obj.hexdigest()}
+
+
+    # 取历史副本
+    def get_history_info(self, filename):
+        try:
+            save_path = ('/www/backup/file_history/' +
+                         filename).replace('//', '/')
+            if not os.path.exists(save_path):
+                return []
+            result = []
+            for f in  sorted(os.listdir(save_path)):
+                f_name = (save_path + '/' + f).replace('//', '/')
+                pdata = {}
+                pdata['md5'] = public.FileMd5(f_name)
+                f_stat = os.stat(f_name)
+                pdata['st_mtime'] = int(f)
+                pdata['st_size'] = f_stat.st_size
+                pdata['history_file'] = f_name
+                result.append(pdata)
+            return result
+        except:
+            return []
+
+    #获取文件扩展名
+    def get_file_ext(self,filename):
+        ss_exts = ['tar.gz','tar.bz2','tar.bz']
+        for s in ss_exts:
+            e_len = len(s)
+            f_len = len(filename)
+            if f_len < e_len: continue
+            if filename[-e_len:] == s:
+                return s
+        if filename.find('.') == -1: return ''
+        return filename.split('.')[-1]
+
+
+    # 取所属用户或组
+    def get_mode_user(self,uid):
+        import pwd
+        try:
+            return pwd.getpwuid(uid).pw_name
+        except:
+            return uid
+
+
+    # 取指定文件属性
+    def get_file_attribute(self,args):
+        filename = args.filename.strip()
+        if not os.path.exists(filename):
+            return public.returnMsg(False,'the specified file does not exist!')
+        attribute = {}
+        attribute['name'] = os.path.basename(filename)
+        attribute['path'] = os.path.dirname(filename)
+        f_stat = os.stat(filename)
+        attribute['st_atime'] = int(f_stat.st_atime)   # 最后访问时间
+        attribute['st_mtime'] = int(f_stat.st_mtime)   # 最后修改时间
+        attribute['st_ctime'] = int(f_stat.st_ctime)   # 元数据修改时间/权限或数据者变更时间
+        attribute['st_size'] = f_stat.st_size          # 文件大小(bytes)
+        attribute['st_gid'] = f_stat.st_gid            # 用户组id
+        attribute['st_uid'] = f_stat.st_uid            # 用户id
+        attribute['st_nlink'] = f_stat.st_nlink        #  inode 的链接数
+        attribute['st_ino'] = f_stat.st_ino            #  inode 的节点号
+        attribute['st_mode'] = f_stat.st_mode          #  inode 保护模式
+        attribute['st_dev'] = f_stat.st_dev            #  inode 驻留设备
+        attribute['user'] = self.get_mode_user(f_stat.st_uid)   # 所属用户
+        attribute['group'] = self.get_mode_user(f_stat.st_gid)  # 所属组
+        attribute['mode'] = str(oct(f_stat.st_mode)[-3:])         # 文件权限号
+        attribute['md5'] = 'Do not count files or directories larger than 100MB'                        # 文件MD5
+        attribute['sha1'] = 'Do not count files or directories larger than 100MB'                       # 文件sha1
+        attribute['is_dir'] = os.path.isdir(filename)   # 是否为目录
+        attribute['is_link'] = os.path.islink(filename)  # 是否为链接文件
+        if attribute['is_link']:
+            attribute['st_type'] = 'Link file'
+        elif attribute['is_dir']:
+            attribute['st_type'] = 'Dir'
+        else:
+             attribute['st_type'] = self.get_file_ext(filename)
+        attribute['history'] = []
+        if f_stat.st_size < 104857600 and not attribute['is_dir']:
+            hash_info = self.get_file_hash(filename=filename)
+            attribute['md5'] = hash_info['md5']
+            attribute['sha1'] = hash_info['sha1']
+            attribute['history'] = self.get_history_info(filename) # 历史文件
+        return attribute
 
     # 数据库对象
     def _get_sqlite_connect(self):
@@ -1992,13 +2309,17 @@ cd %s
 
     # 操作数据库
     def _operate_db(self,q_sql,permissions_tb=None):
-        self._get_sqlite_connect()
-        c = self.sqlite_connection.cursor()
-        table = "index_tb"
-        if permissions_tb:
-            table = permissions_tb
-        sql_data = q_sql.replace("TB_NAME",table)
-        return c.execute(sql_data)
+        try:
+            self._get_sqlite_connect()
+            c = self.sqlite_connection.cursor()
+            table = "index_tb"
+            if permissions_tb:
+                table = permissions_tb
+            sql_data = q_sql.replace("TB_NAME",table)
+            return c.execute(sql_data)
+        except:
+            self._create_index_tb()
+            self._operate_db(q_sql,permissions_tb)
 
     # 判断文件个数
     def _get_file_total(self,path,num,date):
@@ -2028,6 +2349,18 @@ CREATE TABLE {}(
    date CHAR,
    type CHAR 
 );""".format(tb_name)
+        self.sqlite_connection.execute(sql)
+
+    def _create_index_tb(self):
+        self._get_sqlite_connect()
+        sql = """
+CREATE TABLE index_tb(
+   id INTEGER  PRIMARY KEY AUTOINCREMENT,
+   permissions_tb CHAR ,
+   date CHAR,
+   remark CHAR,
+   first_path CHAR
+);"""
         self.sqlite_connection.execute(sql)
 
     # 获取权限表名
@@ -2293,3 +2626,23 @@ CREATE TABLE {}(
             except:
                 print(public.get_error_info())
         return public.returnMsg(True,"Permission repair succeeded")
+
+    def restore_website(self,args):
+        """
+            @name 恢复站点文件
+            @author zhwen<zhw@bt.cn>
+            @parma file_name 备份得文件名
+            @parma site_id 网站id
+        """
+        import panel_restore
+        pr=panel_restore.panel_restore()
+        return pr.restore_website_backup(args)
+
+    def get_progress(self,args):
+        """
+            @name 获取进度日志
+            @author zhwen<zhw@bt.cn>
+        """
+        import panel_restore
+        pr=panel_restore.panel_restore()
+        return pr.get_progress(args)

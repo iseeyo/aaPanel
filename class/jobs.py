@@ -4,13 +4,27 @@
 # +-------------------------------------------------------------------
 # | Copyright (c) 2015-2099 宝塔软件(http://bt.cn) All rights reserved.
 # +-------------------------------------------------------------------
-# | Author: 黄文良 <287962566@qq.com>
+# | Author: hwliang <hwl@bt.cn>
 # +-------------------------------------------------------------------
 import time,public,db,os,sys,json,re
 os.chdir('/www/server/panel')
 
 def control_init():
+    dirPath = '/www/server/phpmyadmin/pma'
+    if os.path.exists(dirPath):
+        public.ExecShell("rm -rf {}".format(dirPath))
+
+    dirPath = '/www/server/adminer'
+    if os.path.exists(dirPath):
+        public.ExecShell("rm -rf {}".format(dirPath))
+
+    dirPath = '/www/server/panel/adminer'
+    if os.path.exists(dirPath):
+        public.ExecShell("rm -rf {}".format(dirPath))
+
+
     time.sleep(1)
+
     sql = db.Sql().dbfile('system')
     if not sql.table('sqlite_master').where('type=? AND name=?', ('table', 'load_average')).count():
         csql = '''CREATE TABLE IF NOT EXISTS `load_average` (
@@ -61,6 +75,21 @@ def control_init():
 )'''
         sql.execute(csql,())
 
+    if not sql.table('sqlite_master').where('type=? AND name=?', ('table', 'temp_login')).count():
+        csql = '''CREATE TABLE IF NOT EXISTS `temp_login` (
+`id` INTEGER PRIMARY KEY AUTOINCREMENT,
+`token` REAL,
+`salt` REAL,
+`state` INTEGER,
+`login_time` INTEGER,
+`login_addr` REAL,
+`logout_time` INTEGER,
+`expire` INTEGER,
+`addtime` INTEGER
+)'''
+        sql.execute(csql,())
+
+
     if not public.M('sqlite_master').where('type=? AND name=? AND sql LIKE ?', ('table', 'logs','%username%')).count():
         public.M('logs').execute("alter TABLE logs add uid integer DEFAULT '1'",())
         public.M('logs').execute("alter TABLE logs add username TEXT DEFAULT 'system'",())
@@ -73,6 +102,14 @@ def control_init():
         public.M('crontab').execute("ALTER TABLE 'crontab' ADD 'sBody' TEXT",())
         public.M('crontab').execute("ALTER TABLE 'crontab' ADD 'sType' TEXT",())
         public.M('crontab').execute("ALTER TABLE 'crontab' ADD 'urladdress' TEXT",())
+
+    public.M('users').where('email=? or email=?',('287962566@qq.com','amw_287962566@qq.com')).setField('email','test@message.com')
+
+    if not public.M('sqlite_master').where('type=? AND name=? AND sql LIKE ?', ('table', 'users','%salt%')).count():
+        public.M('users').execute("ALTER TABLE 'users' ADD 'salt' TEXT",())
+
+    public.chdck_salt()
+
 
 
     filename = '/www/server/nginx/off'
@@ -97,11 +134,29 @@ def control_init():
     public.ExecShell(c)
     p_file = 'class/plugin2.so'
     if os.path.exists(p_file): public.ExecShell("rm -f class/*.so")
-    public.ExecShell("chmod -R  600 /www/server/panel/data;chmod -R  600 /www/server/panel/config;chmod -R  700 /www/server/cron;chmod -R  600 /www/server/cron/*.log;chown -R root:root /www/server/panel/data;chown -R root:root /www/server/panel/config")
+    public.ExecShell("chmod -R  600 /www/server/panel/data;chmod -R  600 /www/server/panel/config;chmod -R  700 /www/server/cron;chmod -R  600 /www/server/cron/*.log;chown -R root:root /www/server/panel/data;chown -R root:root /www/server/panel/config;chown -R root:root /www/server/phpmyadmin;chmod -R 755 /www/server/phpmyadmin")
+    if os.path.exists("/www/server/mysql"):
+        public.ExecShell("chown mysql:mysql /etc/my.cnf;chmod 600 /etc/my.cnf")
+    stop_path = '/www/server/stop'
+    if not os.path.exists(stop_path):
+        os.makedirs(stop_path)
+    public.ExecShell("chown -R root:root {path};chmod -R 755 {path}".format(path=stop_path))
+    public.ExecShell('chmod 755 /www;chmod 755 /www/server')
+    if os.path.exists('/www/server/phpmyadmin/pma'):
+        public.ExecShell("rm -rf /www/server/phpmyadmin/pma")
+    if os.path.exists("/www/server/adminer"):
+        public.ExecShell("rm -rf /www/server/adminer")
+    if os.path.exists("/www/server/panel/adminer"):
+        public.ExecShell("rm -rf /www/server/panel/adminer")
+    if os.path.exists('/dev/shm/session.db'):
+        os.remove('/dev/shm/session.db')
     #disable_putenv('putenv')
-    clean_session()
+    #clean_session()
     #set_crond()
+    test_ping()
     clean_max_log('/www/server/panel/plugin/rsync/lsyncd.log')
+    clean_max_log('/var/log/rsyncd.log',1024*1024*10)
+    clean_max_log('/root/.pm2/pm2.log',1024*1024*20)
     remove_tty1()
     clean_hook_log()
     run_new()
@@ -109,7 +164,128 @@ def control_init():
     #check_firewall()
     check_dnsapi()
     clean_php_log()
-    update_py37()
+    #update_py37()
+    files_set_mode()
+    set_pma_access()
+    # public.set_open_basedir()
+    clear_fastcgi_safe()
+
+def clear_fastcgi_safe():
+    try:
+        fastcgifile = '/www/server/nginx/conf/fastcgi.conf'
+        if os.path.exists(fastcgifile):
+            conf = public.readFile(fastcgifile)
+            if conf.find('bt_safe_open') != -1:
+                public.ExecShell('sed -i "/bt_safe_open/d" {}'.format(fastcgifile))
+                public.ExecShell('/etc/init.d/nginx reload')
+    except:
+        pass
+
+#设置文件权限
+def files_set_mode():
+    rr = {True:'-R',False:''}
+    m_paths = [
+        ["/www/server/total","/*.lua","root",755,False],
+        ["/www/server/total","/*.json","root",755,False],
+        ["/www/server/total/logs","","www",755,True],
+        ["/www/server/total/total","","www",755,True],
+        ["/www/server/speed","/*.lua","root",755,False],
+        ["/www/server/speed/total","","www",755,True],
+        ["/www/server/btwaf","/*.lua","root",755,False],
+        ["/www/backup","","root",600,True],
+        ["/www/wwwlogs","","www",700,True],
+        ["/www/enterprise_backup","","root",600,True],
+        ["/www/server/cron","","root",700,True],
+        ["/www/server/cron","/*.log","root",600,True],
+        ["/www/server/stop","","root",755,True],
+        ["/www/server/redis","","redis",700,True],
+        ["/www/server/redis/redis.conf","","redis",600,False],
+        ["/www/Recycle_bin","","root",600,True],
+        ["/www/server/panel/class","","root",600,True],
+        ["/www/server/panel/data","","root",600,True],
+        ["/www/server/panel/plugin","","root",600,False],
+        ["/www/server/panel/BTPanel","","root",600,True],
+        ["/www/server/panel/vhost","","root",600,True],
+        ["/www/server/panel/rewrite","","root",600,True],
+        ["/www/server/panel/config","","root",600,True],
+        ["/www/server/panel/backup","","root",600,True],
+        ["/www/server/panel/package","","root",600,True],
+        ["/www/server/panel/script","","root",700,True],
+        ["/www/server/panel/temp","","root",600,True],
+        ["/www/server/panel/tmp","","root",600,True],
+        ["/www/server/panel/ssl","","root",600,True],
+        ["/www/server/panel/install","","root",600,True],
+        ["/www/server/panel/logs","","root",600,True],
+        ["/www/server/panel/BT-Panel","","root",700,False],
+        ["/www/server/panel/BT-Task","","root",700,False],
+        ["/www/server/panel","/*.py","root",600,False],
+        ["/dev/shm/session.db","","root",600,False],
+        ["/dev/shm/session_py3","","root",600,True],
+        ["/dev/shm/session_py2","","root",600,True],
+        ["/www/server/phpmyadmin","","root",755,True],
+        ["/www/server/coll","","root",700,True]
+    ]
+
+    for m in m_paths:
+        if not os.path.exists(m[0]): continue
+        path = m[0] + m[1]
+        public.ExecShell("chown {R} {U}:{U} {P}".format(P=path,U=m[2],R=rr[m[4]]))
+        public.ExecShell("chmod {R} {M} {P}".format(P=path,M=m[3],R=rr[m[4]]))
+        if m[1]:
+            public.ExecShell("chown {U}:{U} {P}".format(P=m[0],U=m[2],R=rr[m[4]]))
+            public.ExecShell("chmod {M} {P}".format(P=m[0],M=m[3],R=rr[m[4]]))
+
+#获取PMA目录
+def get_pma_path():
+    pma_path = '/www/server/phpmyadmin'
+    if not os.path.exists(pma_path): return False
+    for filename in os.listdir(pma_path):
+        filepath = pma_path + '/' + filename
+        if os.path.isdir(filepath):
+            if filename[0:10] == 'phpmyadmin':
+                return str(filepath)
+    return False
+
+
+#处理phpmyadmin访问权限
+def set_pma_access():
+    try:
+        pma_path = get_pma_path()
+        if not pma_path: return False
+        if not os.path.exists(pma_path): return False
+        pma_tmp = pma_path + '/tmp'
+        if not os.path.exists(pma_tmp):
+            os.makedirs(pma_tmp)
+
+        nginx_file = '/www/server/nginx/conf/nginx.conf'
+        if os.path.exists(nginx_file):
+            nginx_conf = public.readFile(nginx_file)
+            if nginx_conf.find('/tmp/') == -1:
+                r_conf = '''/www/server/phpmyadmin;
+            location ~ /tmp/ {
+                return 403;
+            }'''
+
+                nginx_conf = nginx_conf.replace('/www/server/phpmyadmin;',r_conf)
+                public.writeFile(nginx_file,nginx_conf)
+                public.serviceReload()
+
+        apa_pma_tmp = pma_tmp + '/.htaccess'
+        if not os.path.exists(apa_pma_tmp):
+            r_conf = '''order allow,deny
+    deny from all'''
+            public.writeFile(apa_pma_tmp,r_conf)
+            public.set_mode(apa_pma_tmp,755)
+            public.set_own(apa_pma_tmp,'root')
+
+        public.ExecShell("chmod -R 700 {}".format(pma_tmp))
+        public.ExecShell("chown -R www:www {}".format(pma_tmp))
+        return True
+    except:
+        return False
+
+
+
 
 
 #尝试升级到独立环境
@@ -121,6 +297,15 @@ def update_py37():
     public.ExecShell("nohup curl {}/install/update_panel_en.sh|bash &>/tmp/panelUpdate.pl &".format(download_url))
     public.writeFile(pyenv_exists,'True')
     return True
+
+def test_ping():
+    _f = '/www/server/panel/data/ping_token.pl'
+    if os.path.exists(_f): os.remove(_f)
+    try:
+        import panelPing
+        panelPing.Test().create_token()
+    except:
+        pass
 
 #检查dnsapi
 def check_dnsapi():
@@ -212,10 +397,12 @@ def clean_hook_log():
 
 #清理PHP日志
 def clean_php_log():
-    path = '/www/server/panel/php'
+    path = '/www/server/php'
     if not os.path.exists(path): return False
     for name in os.listdir(path):
         filename = path +'/'+name + '/var/log/php-fpm.log'
+        if os.path.exists(filename): clean_max_log(filename)
+        filename = path +'/'+name + '/var/log/php-fpm-test.log'
         if os.path.exists(filename): clean_max_log(filename)
         filename =  path +'/'+name + '/var/log/slow.log'
         if os.path.exists(filename): clean_max_log(filename)
@@ -279,7 +466,7 @@ def set_crond():
             cronPath = public.GetConfigValue('setup_path') + '/cron/' + echo
             shell = public.get_python_bin() + ' /www/server/panel/class/panelLets.py renew_lets_ssl'
             public.writeFile(cronPath,shell)
-            args_obj.id = public.M('crontab').add('name,type,where1,where_hour,where_minute,echo,addtime,status,save,backupTo,sType,sName,sBody,urladdress',("续签Let's Encrypt证书",'day','','0','10',echo,time.strftime('%Y-%m-%d %X',time.localtime()),0,'','localhost','toShell','',shell,''))
+            args_obj.id = public.M('crontab').add('name,type,where1,where_hour,where_minute,echo,addtime,status,save,backupTo,sType,sName,sBody,urladdress',("Renew the Let's Encrypt certificate",'day','','0','10',echo,time.strftime('%Y-%m-%d %X',time.localtime()),0,'','localhost','toShell','',shell,''))
             crontab.crontab().set_cron_status(args_obj)
         else:
             cron_path = public.get_cron_path()

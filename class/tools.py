@@ -4,7 +4,7 @@
 # +-------------------------------------------------------------------
 # | Copyright (c) 2015-2099 宝塔软件(http://bt.cn) All rights reserved.
 # +-------------------------------------------------------------------
-# | Author: 黄文良 <2879625666@qq.com>
+# | Author: hwliang <hwl@bt.cn>
 # +-------------------------------------------------------------------
 
 #------------------------------
@@ -13,7 +13,8 @@
 import sys,os
 panelPath = '/www/server/panel/';
 os.chdir(panelPath)
-sys.path.append(panelPath + "class/")
+if not 'class/' in sys.path:
+    sys.path.insert(0,'class/')
 import public,time,json
 
 #设置MySQL密码
